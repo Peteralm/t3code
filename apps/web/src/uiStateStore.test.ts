@@ -10,7 +10,6 @@ import {
   type PersistedUiState,
   persistState,
   reorderProjects,
-  resolveProjectExpanded,
   setProjectExpanded,
   type UiState,
 } from "./uiStateStore";
@@ -51,20 +50,6 @@ describe("uiStateStore pure functions", () => {
 
     expect(next.threadLastVisitedAtById[threadId]).toBe("2026-02-25T12:29:59.999Z");
     expect(markThreadUnread(next, threadId, null)).toBe(next);
-  });
-
-  it("resolves project expansion from logical, physical, and legacy preference keys", () => {
-    const physicalKey = "environment:/repo/project";
-    const legacyKey = legacyProjectCwdPreferenceKey("/repo/project");
-
-    expect(resolveProjectExpanded({ logical: false, [physicalKey]: true }, ["logical"])).toBe(
-      false,
-    );
-    expect(resolveProjectExpanded({ [physicalKey]: false }, ["new-logical", physicalKey])).toBe(
-      false,
-    );
-    expect(resolveProjectExpanded({ [legacyKey]: false }, ["new-logical", legacyKey])).toBe(false);
-    expect(resolveProjectExpanded({}, ["new-logical"])).toBe(true);
   });
 
   it("sets expansion for every stable key belonging to a logical project", () => {
@@ -159,9 +144,7 @@ describe("parsePersistedState", () => {
     const projectBKey = legacyProjectCwdPreferenceKey("/repo/b");
 
     expect(parsed.projectOrder).toEqual([projectBKey, projectAKey]);
-    expect(resolveProjectExpanded(parsed.projectExpandedById, [projectAKey])).toBe(true);
-    expect(resolveProjectExpanded(parsed.projectExpandedById, [projectBKey])).toBe(false);
-    expect(resolveProjectExpanded(parsed.projectExpandedById, ["unknown"])).toBe(true);
+    expect(parsed.projectExpandedById).toEqual({ [projectAKey]: true, [projectBKey]: false });
   });
 });
 

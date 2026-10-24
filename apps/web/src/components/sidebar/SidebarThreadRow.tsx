@@ -78,6 +78,7 @@ import {
   resolveSidebarRowAccessibility,
   type SidebarDropVerb,
   resolveSidebarThreadStatus,
+  type SidebarThreadStatus,
   resolveThreadLastVisitedAt,
   shouldRecedeSidebarThread,
   resolveWorkingStartedAt,
@@ -509,7 +510,8 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
 
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
-  variant: "card" | "slim";
+  // "folder" is a one-line row inside a boring sidebar project folder.
+  variant: "card" | "slim" | "folder";
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
   snoozeSupported: boolean;
@@ -557,6 +559,50 @@ type SidebarThreadRowProps = {
   onAcknowledgeWoke: (threadRef: ScopedThreadRef, visitedAt: string) => void;
   onFileDropThreads?: ((threadRef: ScopedThreadRef, files: File[]) => void) | undefined;
 };
+
+type SidebarTopStatus = {
+  label: string;
+  icon: "working" | "waiting" | "approval" | "input" | "failed" | "woke" | "done";
+  className: string;
+};
+
+function SidebarStatusText(props: {
+  topStatus: SidebarTopStatus;
+  status: SidebarThreadStatus;
+  thread: SidebarThreadSummary;
+}) {
+  const { topStatus, status, thread } = props;
+  return (
+    <span className={cn("inline-flex items-center gap-1 font-medium", topStatus.className)}>
+      {topStatus.icon === "working" ? (
+        <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
+      ) : topStatus.icon === "waiting" ? (
+        <CircleDotDashedIcon aria-hidden className="size-4 shrink-0" />
+      ) : topStatus.icon === "input" ? (
+        <MessageCircleQuestionIcon aria-hidden className="size-4 shrink-0" />
+      ) : topStatus.icon === "approval" ? (
+        <ShieldQuestionIcon aria-hidden className="size-4 shrink-0" />
+      ) : topStatus.icon === "failed" ? (
+        <CircleAlertIcon aria-hidden className="size-4 shrink-0" />
+      ) : topStatus.icon === "done" ? (
+        <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
+      ) : null}
+      {/* Not a live region: a collapsed sidebar is inert, so
+        BackgroundThreadAnnouncer and the open thread's
+        timeline speak status changes instead. */}
+      {topStatus.label}
+      {status === "working" ? (
+        <span aria-hidden>
+          <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
+        </span>
+      ) : status === "waiting" ? (
+        <span aria-hidden>
+          <WorkingDuration startedAt={thread.latestRun?.completedAt ?? null} />
+        </span>
+      ) : null}
+    </span>
+  );
+}
 
 const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
   const {
@@ -648,7 +694,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     isActive: props.isActive,
     isSelected,
   });
-  const topStatus =
+  const topStatus: SidebarTopStatus | null =
     status === "working"
       ? {
           label: thread.goal?.status === "active" ? "Goal" : "Working",
@@ -963,7 +1009,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         className={cn(
           "min-w-0 flex-1 text-start text-sm transition-opacity motion-reduce:transition-none",
           shouldRecede ? "font-normal" : "font-medium",
-          variant === "card"
+          variant !== "slim"
             ? cn(
                 "truncate",
                 shouldRecede
@@ -1072,7 +1118,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     )
   ) : null;
 
-  if (variant === "slim") {
+  if (variant !== "card") {
+    const inFolder = variant === "folder";
     return (
       <li
         data-thread-item={threadKey}
@@ -1092,9 +1139,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 tabIndex={0}
                 aria-label={accessibility.label}
                 aria-current={accessibility.current}
-                data-testid="sidebar-row-slim"
+                data-testid={inFolder ? "sidebar-row-folder" : "sidebar-row-slim"}
                 aria-busy={isRegeneratingTitle || undefined}
-                className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
+                className={cn(
+                  rowSurfaceClassName,
+                  "flex h-9 items-center gap-2.5 px-2.5",
+                  inFolder && "pl-8",
+                )}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
                 onKeyDown={handleKeyDown}
@@ -1103,15 +1154,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             }
           >
             {accessibleTitle}
-            <span
-              className={cn(
-                "flex shrink-0 items-center transition-opacity",
-                (!props.isActive || variantAction === "unsettle") &&
-                  "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
-              )}
-            >
-              {props.project ? <ProjectFavicon project={props.project} className="size-4" /> : null}
-            </span>
+            {inFolder ? null : (
+              <span
+                className={cn(
+                  "flex shrink-0 items-center transition-opacity",
+                  (!props.isActive || variantAction === "unsettle") &&
+                    "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
+                )}
+              >
+                {props.project ? (
+                  <ProjectFavicon project={props.project} className="size-4" />
+                ) : null}
+              </span>
+            )}
             {draftIndicator}
             {title}
             {pinIndicator}
@@ -1158,6 +1213,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       />
                       <TooltipPopup side="top">Dismiss Woke notification</TooltipPopup>
                     </Tooltip>
+                  ) : inFolder && topStatus ? (
+                    <span className="text-xs">
+                      <SidebarStatusText topStatus={topStatus} status={status} thread={thread} />
+                    </span>
                   ) : (
                     <span className="text-xs">
                       <RelativeTimeLabel
@@ -1323,39 +1382,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           <TooltipPopup side="top">Dismiss Woke notification</TooltipPopup>
                         </Tooltip>
                       ) : (
-                        <span
-                          className={cn(
-                            "inline-flex items-center gap-1 font-medium",
-                            topStatus.className,
-                          )}
-                        >
-                          {topStatus.icon === "working" ? (
-                            <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
-                          ) : topStatus.icon === "waiting" ? (
-                            <CircleDotDashedIcon aria-hidden className="size-4 shrink-0" />
-                          ) : topStatus.icon === "input" ? (
-                            <MessageCircleQuestionIcon aria-hidden className="size-4 shrink-0" />
-                          ) : topStatus.icon === "approval" ? (
-                            <ShieldQuestionIcon aria-hidden className="size-4 shrink-0" />
-                          ) : topStatus.icon === "failed" ? (
-                            <CircleAlertIcon aria-hidden className="size-4 shrink-0" />
-                          ) : topStatus.icon === "done" ? (
-                            <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
-                          ) : null}
-                          {/* Not a live region: a collapsed sidebar is inert, so
-                            BackgroundThreadAnnouncer and the open thread's
-                            timeline speak status changes instead. */}
-                          {topStatus.label}
-                          {status === "working" ? (
-                            <span aria-hidden>
-                              <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
-                            </span>
-                          ) : status === "waiting" ? (
-                            <span aria-hidden>
-                              <WorkingDuration startedAt={thread.latestRun?.completedAt ?? null} />
-                            </span>
-                          ) : null}
-                        </span>
+                        <SidebarStatusText topStatus={topStatus} status={status} thread={thread} />
                       )
                     ) : (
                       <RelativeTimeLabel timestamp={threadTimeTimestamp(thread)} />
