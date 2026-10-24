@@ -179,6 +179,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               }),
           createdBy: "agent",
           creationSource: "mcp",
+          // A thread's launches join its group; a client's launches stand alone.
+          ...(caller === undefined ? {} : { groupedUnderThreadId: caller.id }),
         }).pipe(
           Effect.mapError((error) => {
             if (error._tag === "AttachmentClaimError") {

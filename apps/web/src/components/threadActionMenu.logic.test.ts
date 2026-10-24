@@ -65,6 +65,18 @@ describe("buildThreadActionMenuItems", () => {
     },
   );
 
+  it("offers group actions on a launcher, hiding Settle group when nothing can settle", () => {
+    const ids = (state: ThreadActionMenuState) =>
+      buildThreadActionMenuItems(state).map((item) => item.id);
+    expect(ids({ ...baseState, leadsLaunchGroup: { settleCount: 3 } })).toEqual(
+      expect.arrayContaining(["settle-group", "ungroup"]),
+    );
+    const settled = ids({ ...baseState, leadsLaunchGroup: { settleCount: 0 } });
+    expect(settled).toContain("ungroup");
+    expect(settled).not.toContain("settle-group");
+    expect(ids(baseState)).not.toContain("ungroup");
+  });
+
   it("disables archive while the thread is running", () => {
     const archiveItem = buildThreadActionMenuItems({ ...baseState, isRunning: true }).find(
       (item) => item.id === "archive",

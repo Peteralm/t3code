@@ -999,6 +999,7 @@ describe("Working shelf (beta)", () => {
         section: "active",
         pinnedOrder: [],
         activeOrder: ["a1", "a2", "p1"],
+        membership: null,
       });
       expect(resolveSidebarDropVerb("active", "working")).toBeNull();
     });
@@ -1038,6 +1039,7 @@ describe("Working shelf (beta)", () => {
           section: "active",
           pinnedOrder: [],
           activeOrder: ["offline", "a2", "a1"],
+          membership: null,
         },
         pinnedOrder: [],
         pinnedKeysById: new Map(),
@@ -1058,7 +1060,12 @@ describe("Working shelf (beta)", () => {
       const above = planSidebarThreadDrop({
         activeKey: "a2",
         activeSection: "active",
-        target: { section: "active", pinnedOrder: [], activeOrder: ["a2", "offline"] },
+        target: {
+          section: "active",
+          pinnedOrder: [],
+          activeOrder: ["a2", "offline"],
+          membership: null,
+        },
         pinnedOrder: [],
         pinnedKeysById: new Map(),
         activeOrder: ["offline", "a2"],
@@ -1087,7 +1094,12 @@ describe("Working shelf (beta)", () => {
           ...base,
           activeKey: "a1",
           activeSection: "active",
-          target: { section: "active", pinnedOrder: ["p1"], activeOrder: ["a2", "a1"] },
+          target: {
+            section: "active",
+            pinnedOrder: ["p1"],
+            activeOrder: ["a2", "a1"],
+            membership: null,
+          },
         }),
       ).toEqual({ kind: "none" });
       expect(
@@ -1095,7 +1107,12 @@ describe("Working shelf (beta)", () => {
           ...base,
           activeKey: "p1",
           activeSection: "pinned",
-          target: { section: "active", pinnedOrder: [], activeOrder: ["a1", "p1", "a2"] },
+          target: {
+            section: "active",
+            pinnedOrder: [],
+            activeOrder: ["a1", "p1", "a2"],
+            membership: null,
+          },
         }),
       ).toEqual({
         kind: "move-active",
@@ -1234,7 +1251,10 @@ describe("project organization in the sidebar", () => {
   const keptProjectId = ProjectId.make("project-kept");
 
   it("hides the threads of an archived project, scoped or not", () => {
-    const hidden = makeThreadFixture({ id: ThreadId.make("thread-hidden"), projectId: archivedProjectId });
+    const hidden = makeThreadFixture({
+      id: ThreadId.make("thread-hidden"),
+      projectId: archivedProjectId,
+    });
     const kept = makeThreadFixture({ id: ThreadId.make("thread-kept"), projectId: keptProjectId });
     const archivedKeys = new Set([`${hidden.environmentId}:${archivedProjectId}`]);
 

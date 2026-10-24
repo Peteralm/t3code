@@ -137,6 +137,24 @@ each folder until you show them. Pinned threads stay above the folders, and snoo
 in their own section below them. In this mode you cannot drag threads, and the Working section
 is off. Each device keeps its own choice.
 
+## Group related threads
+
+When an agent starts new threads with T3 tools, they appear under the thread that
+started them, so related work stays together. The group sits where its top thread
+sits. If the top thread is settled or snoozed while another thread in the group is
+still active, the group moves to that thread's place.
+
+On web and desktop, click the thread count on the top thread to fold the group.
+A folded group still shows the open thread and any thread that needs you. To group
+threads yourself, select them and choose **Group**, or drag a thread between two
+threads of a group. To take a thread out, choose **Remove from group** from its
+menu or drag it out of the group. **Ungroup** on the top thread ends the whole
+group.
+
+Groups belong to one environment. A thread cannot join a group on another
+environment. Groups show in the default sidebar; the Boring Sidebar's project folders list
+grouped threads as ordinary rows.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

@@ -162,6 +162,8 @@ it.effect(
       });
       expect(belowCeiling.launched[0]?.runtimeMode).toBe("approval-required");
       expect(belowCeiling.launched[0]?.initialMessage?.senderThreadId).toBeUndefined();
+      // A client's launches stand alone; only a thread's launches join its group.
+      expect(belowCeiling.launched[0]?.groupedUnderThreadId).toBeUndefined();
 
       const aboveCeiling = yield* launchWith("auto-accept-edits", "full-access", { title: "Fix" });
       expect(aboveCeiling.launched[0]?.runtimeMode).toBe("auto-accept-edits");
