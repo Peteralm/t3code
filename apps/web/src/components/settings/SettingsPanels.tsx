@@ -100,6 +100,7 @@ import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { isMacPlatform } from "../../lib/utils";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
+import { unarchiveThreads } from "../../lib/projectThreadArchive";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -3525,6 +3526,29 @@ export function ArchivedThreadsPanel() {
             id={index === 0 ? searchableSetting("archive").id : undefined}
             title={project.title}
             icon={<ProjectFavicon project={project} />}
+            headerAction={
+              projectThreads.length > 1 ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  onClick={() => {
+                    void (async () => {
+                      await unarchiveThreads(
+                        projectThreads.map((thread) =>
+                          scopeThreadRef(thread.environmentId, thread.id),
+                        ),
+                        unarchiveThread,
+                      );
+                      refreshArchivedThreads();
+                    })();
+                  }}
+                >
+                  <ArchiveX className="size-3.5" />
+                  <span>Unarchive all ({projectThreads.length})</span>
+                </Button>
+              ) : null
+            }
           >
             {projectThreads.map((thread) => (
               <SettingsRow

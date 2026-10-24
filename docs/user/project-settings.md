@@ -127,6 +127,10 @@ sidebar and the command palette. Nothing is deleted, and threads keep their stat
 Pin and archive apply to the project on every machine, so every machine with the project must
 be connected. On mobile, use **Organize** in **Settings → Projects & threads → Overview**.
 
+To clear out a project but keep using it, choose **Archive all** in the project's settings. It
+archives every thread in the project, except threads that are still running, and shows Undo. To
+bring them back later, use **Unarchive all** next to the project in **Settings → Archive**.
+
 ## Project icons
 
 Select the project and open Projects to choose an icon, emoji, monogram, or image. The choice applies to

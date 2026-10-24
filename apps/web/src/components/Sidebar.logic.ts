@@ -1,4 +1,7 @@
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  resolveThreadWorkingStartedAt,
+  threadRuntimeCanArchive,
+} from "@t3tools/client-runtime/state/models";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
@@ -583,6 +586,25 @@ export function filterSidebarV2VisibleThreads<
       archivedProjectKeys?.has(projectKey) !== true
     );
   });
+}
+
+/**
+ * Splits a project's sidebar threads for "Archive all threads": the ones that
+ * can be archived now, and a count of running ones that are left in place.
+ */
+export function partitionProjectThreadsForArchive<
+  T extends Pick<SidebarThreadSummary, "archivedAt" | "lineage" | "runtime"> & {
+    environmentId: string;
+    projectId: string;
+  },
+>(threads: readonly T[], projectKeys: ReadonlySet<string>) {
+  const archivable: T[] = [];
+  let runningCount = 0;
+  for (const thread of filterSidebarV2VisibleThreads(threads, projectKeys)) {
+    if (threadRuntimeCanArchive(thread.runtime)) archivable.push(thread);
+    else runningCount += 1;
+  }
+  return { archivable, runningCount };
 }
 
 export function getSidebarForkParentThreadId(

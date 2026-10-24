@@ -15,6 +15,7 @@ import {
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
   filterSidebarV2VisibleThreads,
+  partitionProjectThreadsForArchive,
   formatWorkingDurationLabel,
   getFallbackThreadIdAfterDelete,
   getProjectSortTimestamp,
@@ -452,6 +453,49 @@ describe("sidebar thread lineage helpers", () => {
         new Set([`${environmentId}:${projectId}`]),
       ).map((thread) => thread.id),
     ).toEqual([otherProject.id]);
+  });
+
+  it("archives a project's idle sidebar threads and leaves running ones", () => {
+    const projectId = ProjectId.make("project-archive-all");
+    const environmentId = EnvironmentId.make("environment-archive-all");
+    const idle = makeThreadFixture({ id: ThreadId.make("thread-idle"), environmentId, projectId });
+    const runningBase = makeThreadFixture({
+      id: ThreadId.make("thread-running"),
+      environmentId,
+      projectId,
+    });
+    const running = {
+      ...runningBase,
+      runtime: { ...runningBase.runtime!, status: "running" as const },
+    };
+    const alreadyArchived = makeThreadFixture({
+      id: ThreadId.make("thread-already-archived"),
+      environmentId,
+      projectId,
+      archivedAt: "2026-01-02T00:00:00.000Z",
+    });
+    const subagent = makeThreadFixture({
+      id: ThreadId.make("thread-child"),
+      environmentId,
+      projectId,
+      lineage: {
+        rootThreadId: idle.id,
+        parentThreadId: idle.id,
+        relationshipToParent: "subagent",
+      },
+    });
+    const otherProject = makeThreadFixture({
+      id: ThreadId.make("thread-elsewhere"),
+      environmentId,
+      projectId: ProjectId.make("project-elsewhere"),
+    });
+
+    const { archivable, runningCount } = partitionProjectThreadsForArchive(
+      [idle, running, alreadyArchived, subagent, otherProject],
+      new Set([`${environmentId}:${projectId}`]),
+    );
+    expect(archivable.map((thread) => thread.id)).toEqual([idle.id]);
+    expect(runningCount).toBe(1);
   });
 
   it("identifies subagent threads so the sidebar can hide them", () => {

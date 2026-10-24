@@ -87,6 +87,7 @@ import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import {
   readThreadShell,
+  readThreadShells,
   useProjects,
   useThreadShells,
   useThreadShellsForProjectRefs,
@@ -199,6 +200,7 @@ import {
 } from "./Sidebar.logic";
 import { sortThreads } from "../lib/threadSort";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { archiveProjectThreads, countProjectThreadsToArchive } from "../lib/projectThreadArchive";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
@@ -1763,12 +1765,33 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           });
         });
 
+        // Covers every checkout in the group, like the project's thread list.
+        // Read at open time: subscribing every project row to all threads would
+        // re-render the whole list on any thread change.
+        const threads = readThreadShells();
+        const { archivableCount } = countProjectThreadsToArchive(project, threads);
+        actionHandlers.set("archive-threads", async () => {
+          await archiveProjectThreads({
+            project,
+            threads,
+            confirm: appSettingsConfirmThreadArchive
+              ? (message) => api.dialogs.confirm(message)
+              : null,
+            archiveThread,
+          });
+        });
+
         const clicked = await api.contextMenu.show(
           [
             buildTargetedItem("rename", "Rename"),
             buildTargetedItem("grouping", "Group into..."),
             buildTargetedItem("copy-path", "Copy Path"),
             { id: "project-settings", label: "Project settings", icon: "settings" },
+            {
+              id: "archive-threads",
+              label: `Archive all threads (${archivableCount})`,
+              ...(archivableCount === 0 ? { disabled: true } : {}),
+            },
             buildTargetedItem("delete", "Remove", {
               destructive: true,
             }),
@@ -1787,14 +1810,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       })();
     },
     [
+      appSettingsConfirmThreadArchive,
+      archiveThread,
       copyPathToClipboard,
       handleRemoveProject,
       isMobile,
       openProjectGroupingDialog,
       openProjectRenameDialog,
-      project.groupedProjectCount,
-      project.memberProjects,
-      project.projectKey,
+      project,
       router,
       setOpenMobile,
       suppressProjectClickForContextMenuRef,

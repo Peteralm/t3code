@@ -23,6 +23,12 @@ import { useThreadShells } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useProjectGroupActions } from "../../hooks/useProjectGroupActions";
+import { useClientSettings } from "../../hooks/useSettings";
+import { useThreadActions } from "../../hooks/useThreadActions";
+import {
+  archiveProjectThreads,
+  countProjectThreadsToArchive,
+} from "../../lib/projectThreadArchive";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -211,6 +217,29 @@ function ProjectDetail({
   const allGroups = useSettingsProjectGroups();
   const isPinned = wholeGroup.pinnedAt != null;
   const isArchived = wholeGroup.archivedAt != null;
+  // Archiving threads follows the checkout picker, unlike pin and archive above.
+  const { archiveThread, unarchiveThread } = useThreadActions();
+  const confirmThreadArchive = useClientSettings((settings) => settings.confirmThreadArchive);
+  const { archivableCount, runningCount } = countProjectThreadsToArchive(group, threads);
+  const archiveAllThreads = useCallback(() => {
+    const api = readLocalApi();
+    void archiveProjectThreads({
+      project: group,
+      threads,
+      confirm: confirmThreadArchive && api ? (message) => api.dialogs.confirm(message) : null,
+      archiveThread,
+      // Settings has no sidebar Undo notice, so Undo rides on a toast.
+      unarchiveThread,
+    });
+  }, [archiveThread, confirmThreadArchive, group, threads, unarchiveThread]);
+  const archiveAllDescription =
+    archivableCount === 0
+      ? "No active threads to archive."
+      : [
+          `Archives ${archivableCount} thread${archivableCount === 1 ? "" : "s"}`,
+          runningCount > 0 ? `, keeping ${runningCount} running` : "",
+          ". Restore them from Settings → Archive.",
+        ].join("");
 
   const renameGroup = useCallback(
     async (nextTitle: string, wasEdited: boolean) => {
@@ -485,6 +514,21 @@ function ProjectDetail({
               />
             </>
           ) : null}
+          <SettingsRow
+            title="Archive all threads"
+            description={archiveAllDescription}
+            control={
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={archivableCount === 0}
+                onClick={archiveAllThreads}
+              >
+                <ArchiveIcon />
+                Archive all
+              </Button>
+            }
+          />
         </SettingsSection>
         <ProjectDefaultsSettings category="project" />
         <ProjectActionsSettings />
