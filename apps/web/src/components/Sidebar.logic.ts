@@ -16,6 +16,7 @@ import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/sh
 import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
+import { sortPinnedProjectsFirst } from "@t3tools/client-runtime/state/project-organization";
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
 import {
   effectiveSnoozed,
@@ -417,6 +418,8 @@ type SidebarProject = {
   title: string;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
+  pinnedAt?: string | null | undefined;
+  pinOrderKey?: string | null | undefined;
 };
 
 type ScopedSidebarProject = SidebarProject & {
@@ -498,14 +501,20 @@ export function filterSidebarV2VisibleThreads<
     environmentId: string;
     projectId: string;
   },
->(threads: readonly T[], scopedProjectKeys: ReadonlySet<string> | null): T[] {
-  return threads.filter(
-    (thread) =>
-      thread.archivedAt === null &&
-      !isSidebarSubagentThread(thread) &&
-      (scopedProjectKeys === null ||
-        scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
-  );
+>(
+  threads: readonly T[],
+  scopedProjectKeys: ReadonlySet<string> | null,
+  /** `environmentId:projectId` of archived projects, whose threads stay hidden. */
+  archivedProjectKeys?: ReadonlySet<string>,
+): T[] {
+  return threads.filter((thread) => {
+    if (thread.archivedAt !== null || isSidebarSubagentThread(thread)) return false;
+    const projectKey = `${thread.environmentId}:${thread.projectId}`;
+    return (
+      (scopedProjectKeys === null || scopedProjectKeys.has(projectKey)) &&
+      archivedProjectKeys?.has(projectKey) !== true
+    );
+  });
 }
 
 export function buildBulkTitleRegenerationContextMenuItem(input: {
@@ -1203,12 +1212,14 @@ export function sortLogicalProjectsForSidebar<
     }
   }
 
-  return sortProjectsByActivity(
-    projects,
-    sortOrder,
-    (project) => threadsByProjectKey.get(project.projectKey) ?? [],
-    (left, right) =>
-      left.title.localeCompare(right.title) || left.projectKey.localeCompare(right.projectKey),
+  return sortPinnedProjectsFirst(
+    sortProjectsByActivity(
+      projects,
+      sortOrder,
+      (project) => threadsByProjectKey.get(project.projectKey) ?? [],
+      (left, right) =>
+        left.title.localeCompare(right.title) || left.projectKey.localeCompare(right.projectKey),
+    ),
   );
 }
 

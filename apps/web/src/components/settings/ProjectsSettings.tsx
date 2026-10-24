@@ -3,11 +3,12 @@ import { LayersIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
+import { ProjectsList } from "./ProjectsList";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import { SettingsPageContainer } from "./settingsLayout";
 import { ALL_ENVIRONMENTS_VALUE, selectEnvironmentAxis } from "./settingsScopeAxis";
 
+/** The list of every project, or one project's identity and checkouts once picked. */
 export function ProjectsSettings() {
   const { search: value, scope, selectScope } = useSettingsScope();
   const unavailable =
@@ -46,9 +47,7 @@ export function ProjectsSettings() {
       ) : unavailable ? (
         unavailable
       ) : (
-        <SettingsScopeNotice target="project">
-          Choose a project to manage its name, icon, checkouts and actions.
-        </SettingsScopeNotice>
+        <ProjectsList />
       )}
     </div>
   );

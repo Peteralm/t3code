@@ -122,6 +122,35 @@ describe("environment grouping", () => {
     expect(resolveSidebarProjectScopeKey({ groups, key, canClearMissingScope: true })).toBe(key);
   });
 
+  it("gives a grouped project the pin and archive of all its machines", () => {
+    const primary = makeProject({
+      repositoryIdentity,
+      archivedAt: "2026-02-01T00:00:00.000Z",
+    });
+    const remote = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+      pinnedAt: "2026-02-02T00:00:00.000Z",
+      pinOrderKey: "m",
+    });
+    const [group] = buildSidebarProjectSnapshots({
+      projects: [primary, remote],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+
+    // The representative is the primary record, but the remote pin still
+    // counts, and one unarchived machine keeps the project active.
+    expect(group?.id).toBe(primary.id);
+    expect(group).toMatchObject({
+      pinnedAt: "2026-02-02T00:00:00.000Z",
+      pinOrderKey: "m",
+      archivedAt: null,
+    });
+  });
+
   it("dedupes stale project rows with the same environment and workspace path", () => {
     const duplicate = makeProject({
       id: ProjectId.make("project-duplicate"),
@@ -206,6 +235,56 @@ describe("environment grouping", () => {
     });
     expect(pickerEntry?.isPreferred).toBe(true);
     expect(pickerEntry?.targetProject.id).toBe(canonical.id);
+  });
+
+  it("builds one picker entry per logical project and targets the preferred environment", () => {
+    const primary = makeProject({ repositoryIdentity });
+    const remote = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const separate = makeProject({
+      id: ProjectId.make("project-separate"),
+      title: "separate",
+      workspaceRoot: "/tmp/separate",
+    });
+    const groups = buildSidebarProjectSnapshots({
+      projects: [separate, primary, remote],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+
+    const entries = buildSidebarProjectPickerEntries({
+      groups,
+      preferredProjectRef: {
+        environmentId: remoteEnvironmentId,
+        projectId: remote.id,
+      },
+    });
+
+    expect(entries).toHaveLength(2);
+    expect(entries[0]?.group.projectKey).toBe(repositoryIdentity.canonicalKey);
+    expect(entries[0]?.targetProject).toMatchObject({
+      environmentId: remoteEnvironmentId,
+      id: remote.id,
+    });
+    expect(entries[0]?.isPreferred).toBe(true);
+    expect(entries[1]?.group.displayName).toBe("separate");
+
+    // A pinned project stays ahead of the preferred one.
+    const separateGroup = groups.find((group) => group.displayName === "separate")!;
+    const sharedGroup = groups.find((group) => group.displayName !== "separate")!;
+    const pinnedFirst = buildSidebarProjectPickerEntries({
+      groups: [{ ...separateGroup, pinnedAt: "2026-02-01T00:00:00.000Z" }, sharedGroup],
+      preferredProjectRef: { environmentId: remoteEnvironmentId, projectId: remote.id },
+    });
+    expect(pinnedFirst.map((entry) => entry.group.projectKey)).toEqual([
+      separateGroup.projectKey,
+      sharedGroup.projectKey,
+    ]);
+    expect(pinnedFirst[1]?.isPreferred).toBe(true);
   });
 
   it("keeps the current environment when available and falls back otherwise", () => {

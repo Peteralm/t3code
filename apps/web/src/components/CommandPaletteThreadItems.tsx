@@ -81,10 +81,18 @@ function useConnectedThreadSearch(query: string) {
 export function useCommandPaletteThreadItems(input: {
   readonly activeThread: { readonly environmentId: EnvironmentId; readonly id: ThreadId } | null;
   readonly threadSearchQuery: string;
+  /** `environmentId:projectId` of archived projects, whose threads stay out, as in the sidebar. */
+  readonly archivedProjectKeys: ReadonlySet<string>;
 }) {
-  const { activeThread, threadSearchQuery } = input;
+  const { activeThread, threadSearchQuery, archivedProjectKeys } = input;
   const navigate = useNavigate();
-  const threads = useThreadShells();
+  const allThreads = useThreadShells();
+  const threads =
+    archivedProjectKeys.size === 0
+      ? allThreads
+      : allThreads.filter(
+          (thread) => !archivedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`),
+        );
   const { projectEnvironmentLocationById } = useEnvironmentLookups();
   const providerEntryByEnvironmentAndInstanceId = useProviderEntryByEnvironmentAndInstanceId();
   const messageSearch = useConnectedThreadSearch(threadSearchQuery);

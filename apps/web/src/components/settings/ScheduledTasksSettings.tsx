@@ -46,7 +46,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import { formatRelativeTime } from "../../timestampFormat";
-import { useEnvironmentSettings } from "../../hooks/useSettings";
+import { useClientSettings, useEnvironmentSettings } from "../../hooks/useSettings";
+import { selectProjectGroupingSettings } from "../../logicalProject";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -67,6 +68,7 @@ import {
 import { useProjects } from "../../state/entities";
 import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
+import { organizeProjectRecords } from "@t3tools/client-runtime/state/project-organization";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { WorktreeBaseBranchPicker } from "../WorktreeBaseBranchPicker";
@@ -1110,7 +1112,14 @@ function ScheduledTaskEditorForm({
     connected ? serverEnvironment.scheduledTasksLive({ environmentId, input: {} }) : null,
   );
   const allProjects = useProjects();
-  const projects = allProjects.filter(
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  // Pinned projects first and archived ones out, except the task's own project.
+  const projects = organizeProjectRecords({
+    projects: allProjects,
+    settings: projectGroupingSettings,
+    keep: (project) =>
+      project.environmentId === initialEnvironmentId && project.id === task?.projectId,
+  }).filter(
     (project) =>
       project.environmentId === environmentId &&
       matchesScheduledTaskScope(scope, environmentId, project.id),

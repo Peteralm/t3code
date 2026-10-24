@@ -3,7 +3,7 @@ import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDr
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import { FolderPlusIcon } from "lucide-react";
+import { FolderPlusIcon, PinIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -123,9 +123,12 @@ export function DraftHeroHeadline({
   const activeProjectKey = activeProjectGroup?.projectKey ?? "";
   const activeProjectDisplayName = activeProjectGroup?.displayName ?? activeProjectTitle;
   const hasResolvedProject = activeProjectTitle !== null;
-  const canChooseProject = projectPickerEntries.length > 0;
+  // Archived projects are not choices, so a catalog of only archived projects
+  // shows the add-project prompt instead of an empty picker.
+  const choosableEntries = projectPickerEntries.filter(({ group }) => group.archivedAt == null);
+  const canChooseProject = choosableEntries.length > 0;
   const shouldShowProjectMenu = canChooseProject;
-  const menuEntries = projectPickerEntries.filter(
+  const menuEntries = choosableEntries.filter(
     ({ targetProject }) =>
       !isScratchProject(targetProject, scratchWorkspaceRootFor(targetProject.environmentId)),
   );
@@ -298,6 +301,9 @@ export function DraftHeroHeadline({
                     primaryEnvironmentId={primaryEnvironmentId}
                     machineByEnvironmentId={environmentMachineById}
                   />
+                ) : null}
+                {entry?.group.pinnedAt != null ? (
+                  <PinIcon aria-label="Pinned" className="size-3 shrink-0 text-muted-foreground" />
                 ) : null}
               </ComboboxItem>
             );

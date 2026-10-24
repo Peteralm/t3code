@@ -15,7 +15,7 @@ import { AsyncResult } from "effect/reactivity";
 import { type EnvironmentId, type ProjectIconOverride } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
-import { InfoIcon, Trash2Icon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, InfoIcon, Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -28,10 +28,12 @@ import {
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useThreadShells, waitForProjectRemoval } from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
+import { useProjectGroupActions } from "../../hooks/useProjectGroupActions";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -152,6 +154,7 @@ export function ProjectSettingsPanel({
     <ProjectDetail
       key={`${selected.projectKey}:${environmentId ?? "all"}:${checkoutKey ?? "all"}`}
       group={scopedGroup}
+      wholeGroup={selected}
       hasOtherMembers={members.length < selected.memberProjects.length}
     />
   );
@@ -159,9 +162,12 @@ export function ProjectSettingsPanel({
 
 function ProjectDetail({
   group,
+  wholeGroup,
   hasOtherMembers,
 }: {
   group: SidebarProjectSnapshot;
+  /** Pin and archive always apply to every machine, even when one is picked. */
+  wholeGroup: SidebarProjectSnapshot;
   hasOtherMembers: boolean;
 }) {
   const navigate = useNavigate({ from: "/settings" });
@@ -292,6 +298,13 @@ function ProjectDetail({
     }
     await updateAllMembers({ title }, "Failed to rename project");
   };
+
+  // Pin and archive go through the shared hook, which queues writes to one
+  // project across the sidebar, palette and settings.
+  const { canOrganize, isBusy, setPinned, setArchived } = useProjectGroupActions();
+  const allGroups = useSettingsProjectGroups();
+  const isPinned = wholeGroup.pinnedAt != null;
+  const isArchived = wholeGroup.archivedAt != null;
 
   const [faviconPickerOpen, setFaviconPickerOpen] = useComposerMenuState(!canEditGroup);
   const [iconPickerOpen, setIconPickerOpen] = useComposerMenuState(!canEditGroup);
@@ -546,6 +559,43 @@ function ProjectDetail({
               </div>
             }
           />
+          {canOrganize(wholeGroup) ? (
+            <>
+              <SettingsRow
+                title="Pin"
+                description="Pinned projects come first in every project picker."
+                control={
+                  <Switch
+                    aria-label="Pin project"
+                    checked={isPinned}
+                    disabled={isBusy(wholeGroup.projectKey)}
+                    onCheckedChange={(checked) =>
+                      void setPinned(wholeGroup, Boolean(checked), allGroups)
+                    }
+                  />
+                }
+              />
+              <SettingsRow
+                title="Archive"
+                description={
+                  isArchived
+                    ? "Archived. The project and its threads are hidden until you unarchive it."
+                    : "Hides the project and its threads. Nothing is deleted."
+                }
+                control={
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={isBusy(wholeGroup.projectKey)}
+                    onClick={() => void setArchived(wholeGroup, !isArchived)}
+                  >
+                    {isArchived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
+                    {isArchived ? "Unarchive" : "Archive"}
+                  </Button>
+                }
+              />
+            </>
+          ) : null}
         </SettingsSection>
         <ProjectDefaultsSettings category="project" />
         <ProjectActionsSettings />

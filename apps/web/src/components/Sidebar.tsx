@@ -54,7 +54,14 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 
-import { FolderIcon, ListFilterIcon, PlusIcon, SettingsIcon } from "lucide-react";
+import {
+  FolderIcon,
+  ListFilterIcon,
+  PinIcon,
+  PinOffIcon,
+  PlusIcon,
+  SettingsIcon,
+} from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -104,6 +111,7 @@ import {
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
+import { useProjectGroupActions } from "../hooks/useProjectGroupActions";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
@@ -307,6 +315,8 @@ interface SidebarThreadPartitionInput {
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly workingShelfEnabled: boolean;
+  /** `environmentId:projectId` of archived projects, whose threads stay hidden. */
+  readonly archivedProjectKeys: ReadonlySet<string>;
   // Snooze wakes and the queued-turn grace depend on the clock, so the minute
   // tick and the precise snooze-wake tick are inputs: a new key repartitions.
   readonly clockKey: string;
@@ -369,6 +379,7 @@ function useSidebarThreads(input: {
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly routeThreadRef: ScopedThreadRef | null;
+  readonly archivedProjectKeys: ReadonlySet<string>;
   // Set in boring mode: the project groups to fold threads into, in order.
   readonly folderGroups: readonly SidebarProjectSnapshot[] | null;
 }) {
@@ -378,6 +389,7 @@ function useSidebarThreads(input: {
     serverConfigs,
     optimisticDrop,
     routeThreadRef,
+    archivedProjectKeys,
     folderGroups,
   } = input;
   const threads = useQuietThreadShells();
@@ -445,6 +457,7 @@ function useSidebarThreads(input: {
     serverConfigs,
     optimisticDrop,
     workingShelfEnabled,
+    archivedProjectKeys,
     clockKey: `${nowMinute}:${snoozeWakeTick}`,
   });
   const partitionNextWakeAt = partition.snoozedThreads[0]?.snoozedUntil ?? null;
@@ -594,9 +607,16 @@ function useSidebarThreads(input: {
 }
 
 function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
-  const { threads, scopedProjectKeys, serverConfigs, optimisticDrop, workingShelfEnabled } = input;
+  const {
+    threads,
+    scopedProjectKeys,
+    serverConfigs,
+    optimisticDrop,
+    workingShelfEnabled,
+    archivedProjectKeys,
+  } = input;
   const preciseNow = new Date().toISOString();
-  const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys);
+  const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, archivedProjectKeys);
   inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
@@ -765,7 +785,18 @@ function useSidebarLookups() {
   const environments = useEnvironmentIdentities();
   const serverConfigs = useServerConfigs();
   const providerEntriesByEnvironment = useAtomValue(sidebarProviderEntriesAtom);
-  const projectGroups = useSidebarProjectGroups();
+  const sortedProjectGroups = useSidebarProjectGroups();
+  // Archived projects leave the scope menu and the folders, and their threads leave the list.
+  const projectGroups = sortedProjectGroups.filter((project) => project.archivedAt == null);
+  const archivedProjectKeys = new Set(
+    sortedProjectGroups.flatMap((project) =>
+      project.archivedAt == null
+        ? []
+        : project.memberProjectRefs.map(
+            (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
+          ),
+    ),
+  );
   const environmentLabelById = new Map(
     environments.map((environment) => [environment.environmentId, environment.label] as const),
   );
@@ -789,7 +820,9 @@ function useSidebarLookups() {
   return {
     projects,
     serverConfigs,
+    sortedProjectGroups,
     projectGroups,
+    archivedProjectKeys,
     environmentLabelById,
     providerEntriesByEnvironment,
     projectByKey,
@@ -838,7 +871,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const {
     projects,
     serverConfigs,
+    sortedProjectGroups,
     projectGroups,
+    archivedProjectKeys,
     environmentLabelById,
     providerEntriesByEnvironment,
     projectByKey,
@@ -846,6 +881,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     projectGroupByScopeKey,
     projectScopeItems,
   } = useSidebarLookups();
+  const { canOrganize: canOrganizeProject, setPinned: setProjectPinned } = useProjectGroupActions();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -1181,6 +1217,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     serverConfigs,
     optimisticDrop,
     routeThreadRef,
+    archivedProjectKeys,
     folderGroups: boringSidebarEnabled
       ? scopedProjectGroup === null
         ? projectGroups
@@ -2922,6 +2959,47 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 machineByEnvironmentId={environmentMachineById}
                               />
                             ) : null}
+                            {project && canOrganizeProject(project) ? (
+                              // Pinned rows always show their pin; others on hover.
+                              <span
+                                className={cn(
+                                  "ml-auto flex",
+                                  project.pinnedAt == null &&
+                                    "opacity-0 in-data-highlighted:opacity-100",
+                                )}
+                              >
+                                <Button
+                                  size="icon-xs"
+                                  variant="ghost-muted"
+                                  tabIndex={-1}
+                                  aria-hidden="true"
+                                  title={
+                                    project.pinnedAt == null
+                                      ? `Pin ${project.displayName}`
+                                      : `Unpin ${project.displayName}`
+                                  }
+                                  onPointerDown={(event) => event.stopPropagation()}
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    void setProjectPinned(
+                                      project,
+                                      project.pinnedAt == null,
+                                      sortedProjectGroups,
+                                    );
+                                  }}
+                                >
+                                  {project.pinnedAt == null ? (
+                                    <PinIcon className="size-3.5" />
+                                  ) : (
+                                    <>
+                                      <PinIcon className="size-3.5 in-data-highlighted:hidden" />
+                                      <PinOffIcon className="hidden size-3.5 in-data-highlighted:block" />
+                                    </>
+                                  )}
+                                </Button>
+                              </span>
+                            ) : null}
                             {project ? (
                               <Button
                                 size="icon-xs"
@@ -2929,7 +3007,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 tabIndex={-1}
                                 aria-hidden="true"
                                 title={`Project settings for ${project.displayName}`}
-                                className="ml-auto"
+                                className={canOrganizeProject(project) ? undefined : "ml-auto"}
                                 onPointerDown={(event) => event.stopPropagation()}
                                 onClick={(event) => {
                                   void handleProjectSettings(event, project);

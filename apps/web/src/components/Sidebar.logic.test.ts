@@ -12,6 +12,8 @@ import {
   isSidebarFolderCollapsed,
   sidebarFolderExpansionKeys,
   resolveSidebarFolderDot,
+  filterSidebarV2VisibleThreads,
+  sortLogicalProjectsForSidebar,
   resolveSidebarRowThreadId,
   isSidebarThreadWorking,
   orderItemsByPreferredIds,
@@ -1224,5 +1226,50 @@ describe("groupSidebarThreadsByProject", () => {
       { projectKey: "t3code", inbox: ["a", "b"], settled: ["c"] },
       { projectKey: "fleet", inbox: [], settled: [] },
     ]);
+  });
+});
+
+describe("project organization in the sidebar", () => {
+  const archivedProjectId = ProjectId.make("project-archived");
+  const keptProjectId = ProjectId.make("project-kept");
+
+  it("hides the threads of an archived project, scoped or not", () => {
+    const hidden = makeThreadFixture({ id: ThreadId.make("thread-hidden"), projectId: archivedProjectId });
+    const kept = makeThreadFixture({ id: ThreadId.make("thread-kept"), projectId: keptProjectId });
+    const archivedKeys = new Set([`${hidden.environmentId}:${archivedProjectId}`]);
+
+    expect(
+      filterSidebarV2VisibleThreads([hidden, kept], null, archivedKeys).map((thread) => thread.id),
+    ).toEqual([kept.id]);
+    expect(filterSidebarV2VisibleThreads([hidden, kept], null).map((thread) => thread.id)).toEqual([
+      hidden.id,
+      kept.id,
+    ]);
+  });
+
+  it("puts a pinned project first in every order", () => {
+    const projects = [
+      {
+        id: "newer",
+        projectKey: "newer",
+        memberProjectRefs: [],
+        title: "Newer",
+        updatedAt: "2026-03-02T00:00:00.000Z",
+      },
+      {
+        id: "older",
+        projectKey: "older",
+        memberProjectRefs: [],
+        title: "Older",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+        pinnedAt: "2026-03-03T00:00:00.000Z",
+        pinOrderKey: "m",
+      },
+    ];
+    for (const order of ["manual", "updated_at"] as const) {
+      expect(
+        sortLogicalProjectsForSidebar(projects, [], order).map((project) => project.projectKey),
+      ).toEqual(["older", "newer"]);
+    }
   });
 });

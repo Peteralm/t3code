@@ -45,7 +45,11 @@ function IndexDraftLanding() {
   const [startState, setStartState] = useState({ failed: false, retryRequest: 0 });
 
   const mostRecentProject =
-    sortScopedProjectsForSidebar(projects, threads, "updated_at")[0] ?? null;
+    sortScopedProjectsForSidebar(
+      projects.filter((project) => project.archivedAt == null),
+      threads,
+      "updated_at",
+    )[0] ?? null;
   const attempt = startState.retryRequest;
 
   useEffect(() => {

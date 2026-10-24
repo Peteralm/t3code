@@ -10,11 +10,7 @@ import {
 } from "@t3tools/client-runtime/source-control-clients";
 import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { commandLabel } from "./KeybindingsSettings.logic";
-import {
-  validateSettingsScopeSearch,
-  type ResolvedSettingsScope,
-  type SettingsScopeSearch,
-} from "./settingsScope";
+import type { ResolvedSettingsScope } from "./settingsScope";
 
 export type SettingsPath =
   | "/settings/projects"
@@ -77,7 +73,7 @@ export interface SettingsSearchAvailability {
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/diagnostics": "Diagnostics",
-  "/settings/projects": "Project",
+  "/settings/projects": "Projects",
   "/settings/general": "General",
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
@@ -1128,18 +1124,11 @@ export function isSettingsSearchScopeAvailable(
   }
 }
 
-function settingsScopeKindFromSearch(search: SettingsScopeSearch): ResolvedSettingsScope["kind"] {
-  const target = validateSettingsScopeSearch({ ...search });
-  if (target.checkout && !target.project) return "unavailable";
-  if (target.project) return target.checkout ? "checkout" : "project";
-  return target.machine ? "environment" : "all";
-}
-
-export function isSettingsOverviewVisible(search: SettingsScopeSearch): boolean {
-  const kind = settingsScopeKindFromSearch(search);
-  return kind === "project" || kind === "checkout";
-}
-
+/**
+ * `id` and `title` props for the element a search item anchors to. Panels
+ * spread (or pick from) this instead of restating the strings, so the catalog
+ * and the rendered settings cannot drift apart.
+ */
 export function searchableSetting(id: SettingsSearchItemId): {
   readonly id: string;
   readonly title: string;

@@ -50,7 +50,7 @@ function ChatRouteGlobalShortcuts() {
     settings: projectGroupingSettings,
     primaryEnvironmentId,
     resolveEnvironmentLabel: () => null,
-  }).length;
+  }).filter((group) => group.archivedAt == null).length;
   const terminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
