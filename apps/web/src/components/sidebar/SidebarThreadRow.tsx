@@ -1189,7 +1189,7 @@ const SidebarThreadRow = memo(
             event.stopPropagation();
             onToggleLaunchGroup(launchGroup.block.key);
           }}
-          className="inline-flex h-5 shrink-0 cursor-pointer items-center gap-0.5 rounded-sm px-0.5 text-xs font-medium text-muted-foreground tabular-nums outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          className="inline-flex h-5 shrink-0 cursor-pointer items-center gap-0.5 rounded-sm px-0.5 text-xs font-medium text-muted-foreground tabular-nums outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         >
           <ChevronDownIcon aria-hidden className="size-3.5" />
           {launchGroup.block.rows.length - 1}

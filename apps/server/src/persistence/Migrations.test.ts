@@ -66,6 +66,22 @@ describe("runMigrations", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
+  it.effect("adds project pin and archive columns to a database at 67", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 67 });
+      assert.deepStrictEqual(
+        (yield* runMigrations()).map(([id]) => id),
+        migrationManifest.filter(([id]) => id > 67).map(([id]) => id),
+      );
+      const columns = yield* sql<{ readonly name: string }>`PRAGMA table_info(projection_projects)`;
+      const names = new Set(columns.map((column) => column.name));
+      for (const column of ["pinned_at", "pin_order_key", "archived_at"]) {
+        assert.isTrue(names.has(column), column);
+      }
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect("upgrades a database at exactly 54", () =>
     Effect.gen(function* () {
       yield* runMigrations({ toMigrationInclusive: 54 });

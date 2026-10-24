@@ -497,8 +497,9 @@ function useSidebarThreads(input: {
   const [pendingLaunchers, setPendingLaunchers] = useState<ReadonlyMap<string, ThreadId | null>>(
     () => new Map(),
   );
-  useEffect(() => {
-    if (pendingLaunchers.size === 0) return;
+  // Drop pending changes once the shell shows them (or the thread is gone),
+  // during render so the list never draws the stale group for a frame.
+  if (pendingLaunchers.size > 0) {
     const canonical = new Map(
       threads.map((thread) => [threadShellKey(thread), thread.groupedUnderThreadId ?? null]),
     );
@@ -506,15 +507,12 @@ function useSidebarThreads(input: {
       ([threadKey, launcherId]) =>
         !canonical.has(threadKey) || canonical.get(threadKey) === launcherId,
     );
-    if (landed.length === 0) return;
-    setPendingLaunchers((current) => {
-      const next = new Map(current);
-      for (const [threadKey, launcherId] of landed) {
-        if (next.get(threadKey) === launcherId) next.delete(threadKey);
-      }
-      return next;
-    });
-  }, [pendingLaunchers, threads]);
+    if (landed.length > 0) {
+      const next = new Map(pendingLaunchers);
+      for (const [threadKey] of landed) next.delete(threadKey);
+      setPendingLaunchers(next);
+    }
+  }
   // Grouped threads render under the thread they are grouped under. Each
   // thread keeps its own section; only placement changes.
   const launchLayout = layoutThreadGroups({
@@ -1393,6 +1391,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       : null,
   });
 
+  const launchGroupByKeyRef = useRef(launchGroupByKey);
+  const launchChildKeysRef = useRef(launchChildKeys);
+
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
 
   // History, the command palette, and links can open a thread the project
@@ -1982,8 +1983,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
   const dndSensors = useSensors(useSensor(SidebarPointerSensor, pointerSensorOptions));
   const sectionByThreadKeyRef = useRef(sectionByThreadKey);
-  const launchGroupByKeyRef = useRef(launchGroupByKey);
-  const launchChildKeysRef = useRef(launchChildKeys);
   useLayoutEffect(() => {
     launchGroupByKeyRef.current = launchGroupByKey;
     launchChildKeysRef.current = launchChildKeys;
