@@ -322,9 +322,10 @@ export const promptMatchKey = (text: string) => text.replace(/\s+/g, " ").trim()
  */
 export function terminalInputText(text: string): string {
   // Control characters would reach the terminal as keys: Esc could end the paste early
-  // and run the rest as shortcuts, such as interrupting the turn.
+  // and run the rest as shortcuts, such as interrupting the turn. The C1 range
+  // (U+0080-U+009F) holds the 8-bit forms of the same controls, such as CSI.
   // eslint-disable-next-line no-control-regex -- removing control characters is the point
-  const typable = text.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
+  const typable = text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
   return typable.startsWith("!") ? ` ${typable}` : typable;
 }
 
@@ -365,9 +366,18 @@ const LOCAL_COMMAND_STDOUT = "<local-command-stdout>";
 /** A local command that failed, such as /compact with too little to summarize, prints here. */
 const LOCAL_COMMAND_STDERR = "<local-command-stderr>";
 
-/** The command line a local command's row records, such as `/model sonnet`. */
+/**
+ * The command line a local command's row records, such as `/model sonnet`. A command
+ * typed while a turn ran waits in Claude's queue and is recorded as a system row.
+ */
 export function localCommandInvocation(entry: ClaudeTranscriptEntry): string | undefined {
-  const content = entry.type === "user" && !entry.isMeta ? entry.message?.content : undefined;
+  if (entry.isMeta) return undefined;
+  const content =
+    entry.type === "user"
+      ? entry.message?.content
+      : entry.type === "system" && entry.subtype === "local_command"
+        ? entry.content
+        : undefined;
   if (typeof content !== "string") return undefined;
   const name = /<command-name>([^<]*)<\/command-name>/.exec(content)?.[1];
   if (name === undefined) return undefined;
@@ -441,9 +451,22 @@ export function apiRetryError(status: number | null): string {
   return "unknown";
 }
 
-/** The statuses Claude Code retries on its own. */
-export const isRetryableApiStatus = (status: number) =>
-  status === 408 || status === 409 || status === 429 || status >= 500;
+/** A 429 that asks for a wait longer than this is a usage limit, which Claude Code shows instead of retrying. */
+const MAX_RETRYABLE_429_RETRY_AFTER_SECONDS = 60;
+
+/**
+ * The statuses Claude Code retries on its own. A 429 counts only with a short
+ * Retry-After: without one, or with a long one, it reports the usage limit.
+ */
+export function isRetryableApiStatus(status: number, retryAfter?: string): boolean {
+  if (status === 429) {
+    const seconds = retryAfter === undefined ? Number.NaN : Number(retryAfter);
+    return (
+      Number.isFinite(seconds) && seconds >= 0 && seconds <= MAX_RETRYABLE_429_RETRY_AFTER_SECONDS
+    );
+  }
+  return status === 408 || status === 409 || status >= 500;
+}
 
 /** How long Claude Code waits before retry `attempt` (1-based): the server's Retry-After, else a capped doubling. */
 export function apiRetryDelayMs(attempt: number, retryAfter: string | undefined): number {

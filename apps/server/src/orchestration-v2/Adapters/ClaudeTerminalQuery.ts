@@ -260,6 +260,12 @@ class TranscriptReader {
     if (!this.path) return [];
     // Claude Code creates the file with the first row; until then there is nothing to read.
     const size = NodeFS.statSync(this.path, { throwIfNoEntry: false })?.size ?? 0;
+    // A file that shrank was rewritten: read it again from the start.
+    if (size < this.#offset) {
+      this.#offset = 0;
+      this.#remainder = "";
+      this.#decoder.end();
+    }
     if (size <= this.#offset) return [];
     const length = size - this.#offset;
     const buffer = Buffer.alloc(length);
@@ -329,6 +335,7 @@ class ClaudeTerminalQuery implements ClaudeTerminalQueryRuntime {
   #stoppedAt = 0;
   /** Stop hooks and closing rows still due from a turn the next prompt's row ended first. */
   #lateEnd = { stops: 0, durations: 0, until: 0 };
+  #promptIterator: AsyncIterator<SDKUserMessage> | undefined;
   #command: { readonly prompt: PendingPrompt; readonly done: () => void } | undefined;
   #localCommand: LocalCommand | undefined;
   /** Texts being typed right now; a key written between their pastes would land in the text. */
@@ -417,9 +424,25 @@ class ClaudeTerminalQuery implements ClaudeTerminalQueryRuntime {
     this.#rewindTranscript();
     await this.#launch(undefined);
     this.#pollTimer = setInterval(() => this.#tick(), POLL_INTERVAL_MS);
-    for await (const message of prompt) {
-      if (this.#closed) return;
-      this.#offer(message);
+    const iterator = prompt[Symbol.asyncIterator]();
+    this.#promptIterator = iterator;
+    // close() ran while the terminal launched; it had no iterator to end yet.
+    if (this.#closed) return this.#endPromptIterator();
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done || this.#closed) return;
+      this.#offer(next.value);
+    }
+  }
+
+  /** Ends the prompt source so it stops waiting for a consumer that is gone. */
+  #endPromptIterator() {
+    const iterator = this.#promptIterator;
+    this.#promptIterator = undefined;
+    try {
+      void Promise.resolve(iterator?.return?.()).catch(() => undefined);
+    } catch {
+      // A source that throws on return has nothing left to release.
     }
   }
 
@@ -1941,7 +1964,9 @@ class ClaudeTerminalQuery implements ClaudeTerminalQueryRuntime {
       turn.apiFailures = 0;
       return;
     }
-    if (!isRetryableApiStatus(status)) return;
+    const retryAfterHeader = headers["retry-after"];
+    const retryAfter = Array.isArray(retryAfterHeader) ? retryAfterHeader[0] : retryAfterHeader;
+    if (!isRetryableApiStatus(status, retryAfter)) return;
     // Claude Code does not repeat a call the server marks so, other than an overload.
     if (status !== 529 && headers["x-should-retry"] === "false") return;
     const attempt = ++turn.apiFailures;
@@ -1949,15 +1974,11 @@ class ClaudeTerminalQuery implements ClaudeTerminalQueryRuntime {
     const maxRetries = maxApiRetries(env.CLAUDE_CODE_MAX_RETRIES);
     // Past the budget Claude Code gives up and writes the error reply instead.
     if (attempt > maxRetries) return;
-    const retryAfter = headers["retry-after"];
     this.#emitSystem({
       subtype: "api_retry",
       attempt,
       max_retries: maxRetries,
-      retry_delay_ms: apiRetryDelayMs(
-        attempt,
-        Array.isArray(retryAfter) ? retryAfter[0] : retryAfter,
-      ),
+      retry_delay_ms: apiRetryDelayMs(attempt, retryAfter),
       error_status: status,
       error: apiRetryError(status),
     });
@@ -1968,6 +1989,10 @@ class ClaudeTerminalQuery implements ClaudeTerminalQueryRuntime {
     // After Stop, requests such as the next-prompt suggestion reuse the main
     // conversation; their text is not part of the reply.
     if (!this.#turn || this.#turn.command || this.#turn.stopSeenAt > 0) return;
+    // A reply that starts streaming ends the run of failed calls.
+    if ((event as { readonly type?: unknown } | null)?.type === "message_start") {
+      this.#turn.apiFailures = 0;
+    }
     // The terminal saves each finished block; it goes out before the next block's deltas.
     this.#pumpTranscripts();
     this.#emit({
@@ -2547,6 +2572,7 @@ class ClaudeTerminalQuery implements ClaudeTerminalQueryRuntime {
     // An approval hook still open keeps its socket, and the curl behind it, alive.
     this.#hookServer?.closeAllConnections();
     this.#tap?.close();
+    this.#endPromptIterator();
     this.#command?.done();
     this.#removeWorkDir(0);
   };
