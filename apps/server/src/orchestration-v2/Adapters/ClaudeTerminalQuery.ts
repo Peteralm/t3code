@@ -1135,8 +1135,17 @@ class ClaudeTerminalQuery implements ClaudeTerminalQueryRuntime {
     this.#startTurn({
       echo: pending.map((each) => each.uuid),
       origin: pending.length > 0 || !notification ? undefined : { kind: "task-notification" },
-      command: false,
+      command: this.#isCompaction(pending),
     });
+  }
+
+  /** /compact runs without a model call and no Stop hook ends it; its output line does. */
+  #isCompaction(prompts: PendingPrompt[]) {
+    return (
+      prompts.length === 1 &&
+      prompts[0]?.command === "compact" &&
+      this.#command?.prompt === prompts[0]
+    );
   }
 
   #startTurn(input: {
@@ -1501,7 +1510,7 @@ class ClaudeTerminalQuery implements ClaudeTerminalQueryRuntime {
         this.#startTurn({
           echo: pending.map((each) => each.uuid),
           origin: undefined,
-          command: false,
+          command: this.#isCompaction(pending),
         });
       }
       // A turn no prompt of ours started: a finished task, a peer message.
