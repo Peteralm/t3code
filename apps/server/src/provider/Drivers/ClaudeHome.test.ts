@@ -14,6 +14,37 @@ import {
 
 it.layer(NodeServices.layer)("ClaudeHome", (it) => {
   describe("Claude home resolution", () => {
+    it.effect(
+      "identifies Claude requests as T3 Code without mutating the inherited environment",
+      () =>
+        Effect.gen(function* () {
+          const environment = Object.freeze({ PATH: "/bin" });
+
+          for (const homePath of ["", "~/.claude-work"]) {
+            const resolved = yield* makeClaudeEnvironment({ homePath }, environment);
+
+            expect(resolved.CLAUDE_CODE_ENTRYPOINT).toBe("t3-code");
+            expect(resolved.PATH).toBe(environment.PATH);
+            expect(resolved).not.toBe(environment);
+          }
+
+          expect(environment).toEqual({ PATH: "/bin" });
+        }),
+    );
+
+    it.effect("preserves an explicitly configured Claude client identity", () =>
+      Effect.gen(function* () {
+        for (const entrypoint of ["sdk-ts", "custom-client", ""]) {
+          const environment = { CLAUDE_CODE_ENTRYPOINT: entrypoint };
+
+          for (const homePath of ["", "~/.claude-work"]) {
+            const resolved = yield* makeClaudeEnvironment({ homePath }, environment);
+            expect(resolved.CLAUDE_CODE_ENTRYPOINT).toBe(entrypoint);
+          }
+        }
+      }),
+    );
+
     it.effect("resolves configured Claude HOME and stamps continuation/cache keys with it", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
