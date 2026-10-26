@@ -709,6 +709,69 @@ export function isMainConversationRequest(body: unknown): boolean {
   return !lastText.startsWith("[SUGGESTION MODE");
 }
 
+const PROGRESS_SUMMARY_PROMPT = "Describe your most recent action in 3-5 words";
+
+/**
+ * Whether a /v1/messages body asks a running subagent for the one-line label
+ * of its task row. The terminal sends one every ~30 s per subagent, with the
+ * subagent's whole context; the SDK never does, and T3 shows no such label.
+ */
+export function isProgressSummaryRequest(body: unknown): boolean {
+  if (typeof body !== "object" || body === null) return false;
+  const messages = (body as { readonly messages?: unknown }).messages;
+  if (!Array.isArray(messages)) return false;
+  const content = (messages.at(-1) as { readonly content?: unknown } | undefined)?.content;
+  const texts =
+    typeof content === "string"
+      ? [content]
+      : Array.isArray(content)
+        ? content.map((block) => String((block as { readonly text?: unknown }).text ?? ""))
+        : [];
+  return texts.some((text) => text.startsWith(PROGRESS_SUMMARY_PROMPT));
+}
+
+/**
+ * A finished reply with no content, as a stream or as JSON like the request
+ * asked; Claude Code treats it as an empty answer and moves on.
+ */
+export function emptyMessageResponse(
+  body: unknown,
+  id: string,
+): {
+  readonly contentType: string;
+  readonly body: string;
+} {
+  const request = (typeof body === "object" && body !== null ? body : {}) as {
+    readonly model?: unknown;
+    readonly stream?: unknown;
+  };
+  const message = {
+    id,
+    type: "message",
+    role: "assistant",
+    model: typeof request.model === "string" ? request.model : "",
+    content: [],
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: { input_tokens: 0, output_tokens: 0 },
+  };
+  if (request.stream !== true) {
+    return { contentType: "application/json", body: JSON.stringify(message) };
+  }
+  const event = (type: string, data: object) =>
+    `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
+  return {
+    contentType: "text/event-stream",
+    body:
+      event("message_start", { message: { ...message, stop_reason: null } }) +
+      event("message_delta", {
+        delta: { stop_reason: "end_turn", stop_sequence: null },
+        usage: { output_tokens: 0 },
+      }) +
+      event("message_stop", {}),
+  };
+}
+
 /**
  * Splits a server-sent-events buffer into the JSON payloads of its complete
  * `data:` lines; returns the unfinished tail to prepend to the next chunk.

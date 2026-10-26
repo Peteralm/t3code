@@ -123,6 +123,47 @@ describe("startClaudeTerminalApiTap", () => {
     }
   });
 
+  it("answers subagent progress-label requests without calling the API", async () => {
+    let upstreamRequests = 0;
+    const upstream = NodeHttp.createServer((_request, response) => {
+      upstreamRequests++;
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end(SSE);
+    });
+    const upstreamPort = await listen(upstream);
+    const tap = await startClaudeTerminalApiTap(`http://127.0.0.1:${upstreamPort}`, {
+      onMainRequest: () => undefined,
+      onMainResponse: () => undefined,
+      onStreamEvent: () => undefined,
+      onRateLimits: () => undefined,
+    });
+    try {
+      const response = await post(tap.url, {
+        ...MAIN_REQUEST,
+        model: "claude-sonnet-5-5",
+        stream: true,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "tool_result", tool_use_id: "toolu_1", content: "ok" },
+              {
+                type: "text",
+                text: "Describe your most recent action in 3-5 words using present tense (-ing).",
+              },
+            ],
+          },
+        ],
+      });
+      expect(response.status).toBe(200);
+      expect(response.body.toString("utf8")).toContain("event: message_stop");
+      expect(upstreamRequests).toBe(0);
+    } finally {
+      tap.close();
+      upstream.close();
+    }
+  });
+
   it("reports the status and Retry-After of a failed main response", async () => {
     const upstream = NodeHttp.createServer((_request, response) => {
       response.writeHead(529, { "content-type": "application/json", "retry-after": "2" });

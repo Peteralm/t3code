@@ -138,6 +138,12 @@ const PARENT_SESSION_ENV_KEYS = new Set([
 ]);
 
 /**
+ * Tools only the terminal offers. The SDK never lists them, and their
+ * descriptions (~10K tokens) would ride along in every request, subagents too.
+ */
+const TERMINAL_ONLY_TOOLS = ["Artifact", "SendFeedback"];
+
+/**
  * Commands whose result T3 keeps track of. Without arguments the terminal
  * would open a picker nobody sees, so those print the current value instead.
  */
@@ -531,6 +537,9 @@ class ClaudeTerminalQuery implements ClaudeTerminalQueryRuntime {
       if (value !== undefined && !PARENT_SESSION_ENV_KEYS.has(key)) env[key] = value;
     }
     if (this.#tap) env.ANTHROPIC_BASE_URL = this.#tap.url;
+    // After each turn the terminal asks the model for a next-prompt suggestion
+    // with the whole conversation; the SDK does not, and T3 never shows one.
+    env.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = "false";
 
     this.#sessionStart = undefined;
     this.#stoppedAt = 0;
@@ -542,6 +551,7 @@ class ClaudeTerminalQuery implements ClaudeTerminalQueryRuntime {
         {
           ...this.#options,
           additionalDirectories: [...(this.#options.additionalDirectories ?? []), this.#imagesDir],
+          disallowedTools: [...(this.#options.disallowedTools ?? []), ...TERMINAL_ONLY_TOOLS],
         },
         { settingsPath, mcpConfigPath, resumeSessionId },
       ),
@@ -579,13 +589,18 @@ class ClaudeTerminalQuery implements ClaudeTerminalQueryRuntime {
 
   async #waitForStartup() {
     let lastKeyAt = 0;
+    // A fresh account shows the bypass warning right after the folder trust
+    // dialog; reading only what came after a confirm keeps the two apart.
+    let answeredAt = this.#screenTotal;
     const started = await this.#waitFor("Claude to start", STARTUP_TIMEOUT_MS, () => {
       const now = Date.now();
       // Answer a dialog only once it has finished drawing.
       if (now - lastKeyAt > 1_000 && now - this.#lastOutputAt > 400) {
-        const key = startupDialogKey(this.#screen.slice(-4_000));
+        const shown = Math.min(this.#screenTotal - answeredAt, 4_000);
+        const key = shown > 0 ? startupDialogKey(this.#screen.slice(-shown)) : undefined;
         if (key) {
           lastKeyAt = now;
+          if (key === "enter") answeredAt = this.#screenTotal;
           this.#process?.write(key === "down" ? "\x1b[B" : "\r");
         }
       }

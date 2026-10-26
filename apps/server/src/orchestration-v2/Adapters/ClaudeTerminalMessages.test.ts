@@ -3,8 +3,10 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   apiRetryDelayMs,
   apiRetryError,
+  emptyMessageResponse,
   inputPastes,
   isMainConversationRequest,
+  isProgressSummaryRequest,
   isRetryableApiStatus,
   localCommandInvocation,
   makeTerminalArgs,
@@ -613,6 +615,65 @@ describe("isMainConversationRequest", () => {
         request([billing, "You are a Claude agent, built on Anthropic's Claude Agent SDK."]),
       ),
     ).toBe(false);
+  });
+});
+
+describe("isProgressSummaryRequest", () => {
+  const ask = "Describe your most recent action in 3-5 words using present tense (-ing).";
+
+  it("matches the label request after a tool result", () => {
+    expect(
+      isProgressSummaryRequest({
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "tool_result", content: "ok" },
+              { type: "text", text: ask },
+            ],
+          },
+        ],
+      }),
+    ).toBe(true);
+    expect(isProgressSummaryRequest({ messages: [{ role: "user", content: ask }] })).toBe(true);
+  });
+
+  it("leaves turns that only quote the label request alone", () => {
+    expect(isProgressSummaryRequest({ messages: [{ role: "user", content: `Why ${ask}` }] })).toBe(
+      false,
+    );
+    expect(
+      isProgressSummaryRequest({
+        messages: [
+          { role: "user", content: ask },
+          { role: "assistant", content: "x" },
+          { role: "user", content: "next" },
+        ],
+      }),
+    ).toBe(false);
+    expect(isProgressSummaryRequest(undefined)).toBe(false);
+  });
+});
+
+describe("emptyMessageResponse", () => {
+  it("answers a stream with a complete empty message", () => {
+    const reply = emptyMessageResponse({ model: "claude-sonnet-5-5", stream: true }, "msg_1");
+    expect(reply.contentType).toBe("text/event-stream");
+    expect(parseServerSentEvents(reply.body).events).toMatchObject([
+      { type: "message_start", message: { id: "msg_1", model: "claude-sonnet-5-5", content: [] } },
+      { type: "message_delta", delta: { stop_reason: "end_turn" } },
+      { type: "message_stop" },
+    ]);
+  });
+
+  it("answers a plain request with JSON", () => {
+    const reply = emptyMessageResponse({ model: "m" }, "msg_2");
+    expect(reply.contentType).toBe("application/json");
+    expect(JSON.parse(reply.body)).toMatchObject({
+      id: "msg_2",
+      content: [],
+      stop_reason: "end_turn",
+    });
   });
 });
 

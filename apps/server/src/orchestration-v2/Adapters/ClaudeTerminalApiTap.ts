@@ -3,8 +3,10 @@
  * A loopback pass-through between the Claude Code terminal and the Anthropic
  * API. Requests and responses cross unchanged; the tap reads the main
  * conversation's response stream and rate-limit headers, which the terminal
- * only shows on screen but the SDK reports as messages.
+ * only shows on screen but the SDK reports as messages. Subagent progress
+ * labels, which only the terminal asks for, are answered here instead.
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeHttp from "node:http";
 import * as NodeHttps from "node:https";
 import type * as NodeStream from "node:stream";
@@ -14,7 +16,9 @@ import * as NodeZlib from "node:zlib";
 import type { SDKRateLimitInfo } from "@anthropic-ai/claude-agent-sdk";
 
 import {
+  emptyMessageResponse,
   isMainConversationRequest,
+  isProgressSummaryRequest,
   parseServerSentEvents,
   rateLimitInfosFromHeaders,
 } from "./ClaudeTerminalMessages.ts";
@@ -109,14 +113,22 @@ export function startClaudeTerminalApiTap(
     request.on("end", () => {
       const body = Buffer.concat(chunks);
       const messages = isMessagesRequest(request.method, request.url);
-      let main = false;
+      let parsed: unknown;
       if (messages) {
         try {
-          main = isMainConversationRequest(JSON.parse(body.toString("utf8")));
+          parsed = JSON.parse(body.toString("utf8"));
         } catch {
-          main = false;
+          parsed = undefined;
         }
       }
+      // The label goes to a terminal row nobody sees; answering here saves its whole-context call.
+      if (isProgressSummaryRequest(parsed)) {
+        const reply = emptyMessageResponse(parsed, `msg_t3_${NodeCrypto.randomUUID()}`);
+        response.writeHead(200, { "content-type": reply.contentType });
+        response.end(reply.body);
+        return;
+      }
+      const main = isMainConversationRequest(parsed);
       if (main) notify(() => listener.onMainRequest());
 
       const outgoing = transport.request(
