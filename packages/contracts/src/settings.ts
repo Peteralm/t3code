@@ -720,9 +720,25 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    interactiveCli: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({
+        title: "Run in the interactive CLI",
+        description:
+          "Runs sessions in Claude Code's terminal interface instead of the Agent SDK, which uses less of the 5-hour limit. Model and effort changes also become your Claude Code defaults.",
+        providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "autoCompactWindow", "idleCompaction", "launchArgs"],
+    order: [
+      "binaryPath",
+      "homePath",
+      "autoCompactWindow",
+      "idleCompaction",
+      "launchArgs",
+      "interactiveCli",
+    ],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;

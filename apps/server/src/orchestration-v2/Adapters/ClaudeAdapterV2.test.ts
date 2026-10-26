@@ -2639,6 +2639,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly freshQueueOnReopen?: boolean;
     readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
     readonly allocateSessionId?: Effect.Effect<string>;
+    readonly switchesPermissionModeInPlace?: true;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2761,6 +2762,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               }
               processQueues.push(sdkMessages);
               return {
+                ...(options?.switchesPermissionModeInPlace === undefined
+                  ? {}
+                  : { switchesPermissionModeInPlace: options.switchesPermissionModeInPlace }),
                 messages,
                 offer: (message) =>
                   Effect.sync(() => {
@@ -4298,6 +4302,65 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.strictEqual(harness.getOpenedOptions(), originalOptions);
           assert.lengthOf(harness.offeredMessages, 4);
           assert.lengthOf(harness.liveSelectionChanges, 4);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
+  it.effect.each([true, false] as const)(
+    "switches the permission mode of a process running a background shell in place: %s",
+    (inPlace) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarnessWithOptions(
+            inPlace ? { switchesPermissionModeInPlace: true } : undefined,
+          );
+          const now = yield* DateTime.now;
+          const turn = (ordinal: number, runtimePolicy = CLAUDE_TEST_RUNTIME_POLICY) =>
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(`attempt-mode-in-place:${ordinal}`),
+              text: `Request ${ordinal}`,
+              attachments: [],
+              providerTurnOrdinal: ordinal,
+              runtimePolicy,
+            });
+          yield* harness.runtime.startTurn(turn(1));
+          const originalOptions = harness.getOpenedOptions();
+          yield* harness.offerAndWait(wakeTaskStarted);
+          yield* harness.offerAndWait(turnOneResult);
+          yield* Queue.take(harness.terminalReceipts);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+          const approvalRequired = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            ...CLAUDE_TEST_RUNTIME_POLICY,
+            runtimeMode: "approval-required",
+          });
+          const started = yield* harness.runtime
+            .startTurn(turn(2, approvalRequired))
+            .pipe(Effect.result);
+          assert.strictEqual(harness.getOpenedOptions(), originalOptions);
+          if (inPlace) {
+            assert.equal(started._tag, "Success");
+            assert.deepEqual(harness.permissionModeChanges, ["default"]);
+            assert.lengthOf(harness.offeredMessages, 2);
+          } else {
+            assert.equal(started._tag, "Failure");
+            if (started._tag === "Failure") {
+              assert.instanceOf(
+                started.failure.cause,
+                ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError,
+              );
+            }
+            assert.deepEqual(harness.permissionModeChanges, []);
+            assert.lengthOf(harness.offeredMessages, 1);
+          }
           assert.isTrue(yield* harness.hasPendingBackgroundWork);
         }).pipe(
           Effect.provide(
