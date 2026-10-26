@@ -1,5 +1,7 @@
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
+import { makeClaudeTerminalQueryFactory } from "./ClaudeTerminalQuery.ts";
+import * as NodePtyAdapter from "../../terminal/NodePtyAdapter.ts";
 import {
   dynamicToolTitle,
   formatReadToolLabel,
@@ -505,9 +507,16 @@ export interface ClaudeAgentSdkQueryOpenInput {
   readonly options: ClaudeAgentSdkQueryOptions;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+  /** Run the session in Claude Code's terminal UI instead of the Agent SDK; see ClaudeTerminalQuery. */
+  readonly interactiveCli?: boolean;
 }
 
 export interface ClaudeAgentSdkQuerySession {
+  /**
+   * The terminal UI changes its permission mode without a new process, so a
+   * policy change that only moves the mode keeps the session's background work.
+   */
+  readonly switchesPermissionModeInPlace?: true;
   readonly messages: Stream.Stream<SDKMessage, ClaudeAgentSdkQueryRunnerError>;
   readonly offer: (message: SDKUserMessage) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly setModel: (model: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
@@ -888,6 +897,7 @@ export const layerQueryRunner: Layer.Layer<
   never,
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
+  | FileSystem.FileSystem
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers
 > = Layer.effect(
@@ -900,6 +910,15 @@ export const layerQueryRunner: Layer.Layer<
     const agentScope = yield* AgentScope;
     const platform = yield* HostProcess.Platform;
     const runFork = Effect.runForkWith(yield* Effect.context<never>());
+    // node-pty loads only once an instance runs in the terminal.
+    const fileSystem = yield* FileSystem.FileSystem;
+    const terminalQuery = yield* Effect.cached(
+      makeClaudeTerminalQueryFactory.pipe(
+        Effect.provide(NodePtyAdapter.layer),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      ),
+    );
 
     return ClaudeAgentSdkQueryRunner.of({
       allocateSessionId: crypto
@@ -927,11 +946,13 @@ export const layerQueryRunner: Layer.Layer<
         // channel instead, so header credentials stay out of its argv and out
         // of the environment every command the agent runs inherits.
         const { mcpServers, ...queryOptions } = input.options;
+        const startTerminalQuery = input.interactiveCli === true ? yield* terminalQuery : undefined;
         // The SDK spawns a native binary as `path ...executableArgs ...sdkArgs`,
         // which lets the agent scope wrapper go in front of the CLI. The SDK
         // runs a script entry through node instead, so those launch unwrapped.
         const binaryPath = queryOptions.pathToClaudeCodeExecutable;
         const launch =
+          startTerminalQuery !== undefined ||
           binaryPath === undefined ||
           CLAUDE_SCRIPT_EXTENSIONS.some((ext) => binaryPath.endsWith(ext))
             ? undefined
@@ -963,13 +984,19 @@ export const layerQueryRunner: Layer.Layer<
         const queryRuntime = yield* Effect.uninterruptibleMask((restore) =>
           Effect.try({
             try: () =>
-              query({
-                prompt,
-                options:
-                  spawnClaudeCodeProcess === undefined
-                    ? options
-                    : { ...options, spawnClaudeCodeProcess },
-              }),
+              startTerminalQuery !== undefined
+                ? // The terminal UI reads MCP servers from a private file at launch.
+                  (startTerminalQuery({
+                    prompt,
+                    options: mcpServers === undefined ? options : { ...options, mcpServers },
+                  }) as unknown as ClaudeQuery)
+                : query({
+                    prompt,
+                    options:
+                      spawnClaudeCodeProcess === undefined
+                        ? options
+                        : { ...options, spawnClaudeCodeProcess },
+                  }),
             catch: (cause) => queryRunnerError(cause, "query"),
           }).pipe(
             Effect.tap((queryRuntime) =>
@@ -1023,6 +1050,7 @@ export const layerQueryRunner: Layer.Layer<
         );
 
         return {
+          ...(startTerminalQuery === undefined ? {} : { switchesPermissionModeInPlace: true }),
           messages: Stream.fromAsyncIterable(claudeQueryMessages(queryRuntime), (cause) =>
             queryRunnerError(cause, "fromAsyncIterable"),
           ).pipe(
@@ -2237,6 +2265,23 @@ export function claudeEffectiveQueryPolicyKey(
     }),
     mcpServers: mcpOverrides.mcpServers,
   });
+}
+
+// The next policy with the live one's permission-mode fields, so that comparing
+// keys shows whether the mode is all that changed.
+function claudeQueryPolicyWithModeOf(
+  next: ClaudeRuntimeQueryPolicy,
+  live: ClaudeRuntimeQueryPolicy,
+): ClaudeRuntimeQueryPolicy {
+  return {
+    ...(next.tools === undefined ? {} : { tools: next.tools }),
+    ...(next.allowedTools === undefined ? {} : { allowedTools: next.allowedTools }),
+    permissionMode: live.permissionMode,
+    ...(live.allowDangerouslySkipPermissions === undefined
+      ? {}
+      : { allowDangerouslySkipPermissions: live.allowDangerouslySkipPermissions }),
+    installPermissionCallback: live.installPermissionCallback,
+  };
 }
 
 type ClaudeToolItemType = Extract<
@@ -3500,10 +3545,10 @@ interface ActiveClaudeSubagent {
 }
 
 interface ClaudeLiveQueryContext {
-  readonly queryPolicy: ClaudeRuntimeQueryPolicy;
+  queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly nativeThreadId: string;
   readonly query: ClaudeAgentSdkQuerySession;
-  readonly queryPolicyKey: string;
+  queryPolicyKey: string;
   selection: CompiledClaudeModelSelection;
   readonly closed: Deferred.Deferred<void, never>;
   lastTurn: ActiveClaudeTurnContext | null;
@@ -9234,6 +9279,32 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ) {
             return existing;
           }
+          // The terminal UI switches modes in place, so a policy that moves only the
+          // permission mode keeps the process and the background work running in it.
+          if (
+            existing !== null &&
+            existing.nativeThreadId === nativeThreadId &&
+            !existing.stopping &&
+            existing.query.switchesPermissionModeInPlace === true &&
+            existing.queryPolicyKey !== queryPolicyKey &&
+            claudeEffectiveQueryPolicyKey(
+              claudeQueryPolicyWithModeOf(queryPolicy, existing.queryPolicy),
+              mcpOverrides,
+            ) === existing.queryPolicyKey
+          ) {
+            const switched = yield* existing.query
+              .setPermissionMode(queryPolicy.permissionMode)
+              .pipe(
+                Effect.as(true),
+                Effect.orElseSucceed(() => false),
+              );
+            if (switched) {
+              existing.queryPolicy = queryPolicy;
+              existing.queryPolicyKey = queryPolicyKey;
+              existing.openedPermissionMode = queryPolicy.permissionMode;
+              existing.permissionMode = queryPolicy.permissionMode;
+            }
+          }
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
@@ -9359,6 +9430,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               threadId: turnInput.threadId,
               providerSessionId: input.providerSessionId,
               options: queryOptions,
+              interactiveCli: adapterOptions.settings.interactiveCli,
             })
             .pipe(
               Effect.onError(() =>
