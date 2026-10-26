@@ -136,6 +136,10 @@ describe("terminal input", () => {
     );
   });
 
+  it("drops the C1 control characters, the 8-bit forms of the same keys", () => {
+    expect(terminalInputText("a\u009b201~b\u0080c\u009fd e")).toBe("a201~bcd e");
+  });
+
   it("matches a prompt to what Claude Code reports for it", () => {
     expect(promptMatchKey(" !a\tb\r\nc ")).toBe(promptMatchKey("!a    b\nc"));
   });
@@ -500,6 +504,24 @@ describe("localCommandInvocation", () => {
     expect(localCommandInvocation(command("compact", ""))).toBe("/compact");
   });
 
+  it("reads the row of a command that waited in Claude's queue", () => {
+    expect(
+      localCommandInvocation({
+        type: "system",
+        subtype: "local_command",
+        uuid: "row",
+        content: [
+          "<command-name>/model</command-name>",
+          "            <command-message>model</command-message>",
+          "            <command-args>claude-sonnet-5-5</command-args>",
+        ].join("\n"),
+      }),
+    ).toBe("/model claude-sonnet-5-5");
+    expect(
+      localCommandInvocation({ type: "system", subtype: "turn_duration", uuid: "row" }),
+    ).toBeUndefined();
+  });
+
   it("ignores prompts and the caveat row", () => {
     expect(localCommandInvocation(row("Reply with exactly: one"))).toBeUndefined();
     expect(
@@ -610,8 +632,18 @@ describe("parseServerSentEvents", () => {
 
 describe("API retries", () => {
   it("retries the statuses Claude Code retries", () => {
-    expect([408, 409, 429, 500, 529].every(isRetryableApiStatus)).toBe(true);
-    expect([200, 400, 401, 404].some(isRetryableApiStatus)).toBe(false);
+    expect([408, 409, 500, 529].every((status) => isRetryableApiStatus(status))).toBe(true);
+    expect([200, 400, 401, 404].some((status) => isRetryableApiStatus(status))).toBe(false);
+  });
+
+  it("retries a 429 only when Retry-After is short", () => {
+    expect(isRetryableApiStatus(429, "2")).toBe(true);
+    expect(isRetryableApiStatus(429, "60")).toBe(true);
+    // A usage limit asks for minutes or hours, and Claude Code shows it instead of retrying.
+    expect(isRetryableApiStatus(429, "3600")).toBe(false);
+    expect(isRetryableApiStatus(429, undefined)).toBe(false);
+    expect(isRetryableApiStatus(429, "soon")).toBe(false);
+    expect(isRetryableApiStatus(429, "-1")).toBe(false);
   });
 
   it("waits Retry-After, else a doubling capped at 32 s", () => {
