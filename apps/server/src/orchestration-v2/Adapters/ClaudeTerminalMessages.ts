@@ -99,7 +99,6 @@ export interface ClaudeTranscriptEntry {
 }
 
 export const stripTerminalEscapes = (text: string) =>
-  // eslint-disable-next-line no-control-regex -- terminal escape sequences start with ESC
   text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*(\x07|\x1b\\)|\x1b[()][0-9A-B]/g, "");
 
 /** What the footer shows for each mode Shift+Tab cycles through. */
@@ -124,7 +123,6 @@ const PERMISSION_MODE_PATTERNS = PERMISSION_MODE_LABELS.map(([label, mode]) => (
 /** The permission mode the footer shows last in a stretch of terminal output. */
 export function permissionModeShown(output: string): PermissionMode | undefined {
   const text = stripTerminalEscapes(
-    // eslint-disable-next-line no-control-regex -- a cursor-forward sequence starts with ESC
     output.replace(/\x1b\[(\d*)C/g, (_, count: string) =>
       SKIPPED_CELL.repeat(Number(count || "1")),
     ),
@@ -281,11 +279,10 @@ const isEmojiPart = (character: string | undefined) =>
   /\p{Extended_Pictographic}|\uFE0F|[\u{1F3FB}-\u{1F3FF}]/u.test(character);
 
 /**
- * Removes the characters the input box strips on its own, which makes it ask
- * for a confirmation or drop the prompt: format characters (zero-width, bidi
- * marks, soft hyphen, tags) and variation selectors, and turns line and paragraph
- * separators into line breaks. The joiner, selector and tags inside an emoji
- * sequence stay, as the input box keeps those.
+ * Removes the characters the input box strips on its own (it then asks for a
+ * confirmation or drops the prompt): zero-width, bidi, soft hyphen, tags and
+ * variation selectors. Line and paragraph separators become line breaks; the
+ * joiner, selector and tags inside an emoji sequence stay.
  */
 export function stripInvisibleCharacters(text: string): string {
   const characters = Array.from(text.replace(/[\u2028\u2029]/g, "\n"));
@@ -324,7 +321,6 @@ export function terminalInputText(text: string): string {
   // Control characters would reach the terminal as keys: Esc could end the paste early
   // and run the rest as shortcuts, such as interrupting the turn. The C1 range
   // (U+0080-U+009F) holds the 8-bit forms of the same controls, such as CSI.
-  // eslint-disable-next-line no-control-regex -- removing control characters is the point
   const typable = text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
   return typable.startsWith("!") ? ` ${typable}` : typable;
 }
