@@ -103,6 +103,8 @@ const ESCAPE_STALL_MS = 3_000;
 const QUEUE_RESUME_MS = 2_500;
 /** How long the Stop hook and closing row of a turn ended early may take to arrive. */
 const LATE_END_WINDOW_MS = 10_000;
+/** How long a hook waits for the transcript to show a reply the API stream already ended. */
+const REPLY_ROW_WAIT_MS = 2_500;
 /** The transcript row Claude Code writes when Esc stopped a turn. */
 const INTERRUPT_MARKER = "[Request interrupted by user";
 const WORK_DIR_REMOVE_RETRIES = 10;
@@ -198,6 +200,12 @@ interface Turn {
   /** The latest assistant row closed the reply (not a tool call); a prompt after it starts the next turn. */
   replyEnded: boolean;
   replyText: string;
+  /** Ids of messages whose stream ended with a closing stop reason; their rows may not be in the file yet. */
+  readonly streamEnded: Set<string>;
+  /** Ids of the messages the transcript has shown rows of. */
+  readonly rowMessages: Set<string>;
+  /** The message the API stream is delivering. */
+  streamingId: string | undefined;
   /** The reply is the error Claude Code wrote for a failed API call, such as a refusal. */
   apiError: { readonly stopReason: string | null; readonly status: number | null } | undefined;
   stopSeenAt: number;
@@ -669,6 +677,26 @@ class ClaudeTerminalQuery implements ClaudeTerminalQueryRuntime {
     });
   }
 
+  /** Waits, bounded, until the transcript shows every reply message the API stream has ended. */
+  async #waitForReplyRow() {
+    const deadline = Date.now() + REPLY_ROW_WAIT_MS;
+    for (;;) {
+      const turn = this.#turn;
+      const missing =
+        turn !== undefined &&
+        !turn.command &&
+        [...turn.streamEnded].some((id) => !turn.rowMessages.has(id));
+      if (!missing || this.#closed || Date.now() >= deadline) return;
+      await sleep(25);
+      try {
+        this.#pumpTranscripts();
+      } catch (error) {
+        this.#fail(error);
+        return;
+      }
+    }
+  }
+
   /** Returns the hook's stdout. Stdout of most hooks becomes context, so they stay empty. */
   async #handleHook(kind: HookKind, input: HookInput, dropped: AbortSignal): Promise<string> {
     if (this.#closed) return "";
@@ -680,6 +708,10 @@ class ClaudeTerminalQuery implements ClaudeTerminalQueryRuntime {
       this.#fail(error);
       return "";
     }
+    // Stop and the next prompt's hook can reach us before the file holds the last assistant row; a
+    // turn closed on them would send its result ahead of the reply.
+    if (kind === "stop" || kind === "prompt-submit") await this.#waitForReplyRow();
+    if (this.#closed) return "";
     this.#notePermissionMode(input.permission_mode);
     switch (kind) {
       case "session-start":
@@ -1183,6 +1215,9 @@ class ClaudeTerminalQuery implements ClaudeTerminalQueryRuntime {
       command: input.command,
       usage: new Map(),
       replyText: "",
+      streamEnded: new Set(),
+      rowMessages: new Set(),
+      streamingId: undefined,
       replyEnded: false,
       apiError: undefined,
       durationRowSeen: 0,
@@ -1564,6 +1599,7 @@ class ClaudeTerminalQuery implements ClaudeTerminalQueryRuntime {
   }
 
   #recordAssistant(turn: Turn, entry: ClaudeTranscriptEntry) {
+    if (entry.message?.id) turn.rowMessages.add(entry.message.id);
     if (entry.message?.usage) {
       turn.usage.set(`${entry.message.id}:${entry.requestId}`, entry.message.usage);
     }
@@ -1985,6 +2021,7 @@ class ClaudeTerminalQuery implements ClaudeTerminalQueryRuntime {
   }
 
   #onStreamEvent(event: unknown) {
+    this.#trackStreamedReply(event);
     this.#activityAt = Date.now();
     // After Stop, requests such as the next-prompt suggestion reuse the main
     // conversation; their text is not part of the reply.
@@ -2002,6 +2039,27 @@ class ClaudeTerminalQuery implements ClaudeTerminalQueryRuntime {
       uuid: NodeCrypto.randomUUID(),
       session_id: this.#sessionId,
     } as unknown as SDKMessage);
+  }
+
+  /** Notes which messages the stream closed, so a hook can tell when the file still lacks their rows. */
+  #trackStreamedReply(event: unknown) {
+    const turn = this.#turn;
+    if (!turn || turn.command || turn.stopSeenAt > 0) return;
+    const { type, message, delta } = event as {
+      readonly type?: string;
+      readonly message?: { readonly id?: unknown };
+      readonly delta?: { readonly stop_reason?: unknown };
+    };
+    if (type === "message_start") {
+      turn.streamingId = typeof message?.id === "string" ? message.id : undefined;
+    } else if (
+      type === "message_delta" &&
+      turn.streamingId &&
+      typeof delta?.stop_reason === "string" &&
+      delta.stop_reason !== "tool_use"
+    ) {
+      turn.streamEnded.add(turn.streamingId);
+    }
   }
 
   #onRateLimits(infos: ReadonlyArray<SDKRateLimitInfo>) {
@@ -2480,15 +2538,32 @@ class ClaudeTerminalQuery implements ClaudeTerminalQueryRuntime {
     this.#enqueue(async () => {
       const task = this.#backgroundTasks.get(taskId);
       if (!task) throw new Error(`Claude has no background task ${taskId} to stop.`);
+      const flat = (text: string) => stripTerminalEscapes(text).replace(/\s/g, "");
       if (task.taskType === "local_agent") {
         // Down opens the agents panel on "main"; each further Down moves to the next agent,
-        // in launch order, and x stops the one selected (no Enter).
+        // in launch order, and x stops the one selected (no Enter). A running shell adds a
+        // "shell" pill that takes the first Down, so Down is pressed until the footer offers
+        // "x to stop", which only an agent row does.
         const agents = [...this.#backgroundTasks.values()].filter(
           (each) => each.taskType === "local_agent",
         );
-        await this.#press("\x1b[B");
-        await sleep(400);
-        for (let step = 0; step <= agents.indexOf(task); step++) {
+        let onAgent = false;
+        for (let presses = 0; presses < 4 && !onAgent; presses++) {
+          const before = this.#screenTotal;
+          await this.#press("\x1b[B");
+          onAgent = await this.#waitFor("the agent row", 1_500, () => {
+            const fresh = this.#screenTotal - before;
+            return fresh > 0 && flat(this.#screen.slice(-fresh)).includes("xtostop")
+              ? true
+              : undefined;
+          }).catch(() => false);
+        }
+        if (!onAgent) {
+          // The panel, if open, takes Esc; closed, there is nothing for it to do.
+          await this.#press("\x1b");
+          throw new Error(`The terminal's agent list does not show task ${taskId}.`);
+        }
+        for (let step = 0; step < agents.indexOf(task); step++) {
           await this.#press("\x1b[B");
           await sleep(250);
         }
@@ -2498,7 +2573,6 @@ class ClaudeTerminalQuery implements ClaudeTerminalQueryRuntime {
         await sleep(300);
         return;
       }
-      const flat = (text: string) => stripTerminalEscapes(text).replace(/\s/g, "");
       // Every key goes through #press: an approval can open between them.
       await this.#waitForOpenApprovals();
       const before = this.#screenTotal;
