@@ -28,12 +28,13 @@ import {
   PinOffIcon,
   SettingsIcon,
 } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import { openCommandPalette } from "../../commandPaletteBus";
 import { useClientSettings } from "../../hooks/useSettings";
 import { getProjectOrderKey } from "../../logicalProject";
 import { useProjectGroupActions } from "../../hooks/useProjectGroupActions";
+import { readUnloadedThreadCount } from "../../state/olderSettledShelf";
 import { normalizeSearchText } from "../../lib/utils";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useEnvironmentMachines, useEnvironments } from "../../state/environments";
@@ -70,17 +71,13 @@ export function ProjectsList() {
   const [view, setView] = useState<"active" | "archived">("active");
   const [query, setQuery] = useState("");
 
-  const scratchRootByEnvironmentId = useMemo(
-    () =>
-      new Map(
-        environments.map((environment) => [
-          environment.environmentId,
-          environment.serverConfig?.scratchWorkspaceRoot,
-        ]),
-      ),
-    [environments],
+  const scratchRootByEnvironmentId = new Map(
+    environments.map((environment) => [
+      environment.environmentId,
+      environment.serverConfig?.scratchWorkspaceRoot,
+    ]),
   );
-  const projectGroups = useMemo(() => {
+  const projectGroups = (() => {
     // The home of threads without a project is not a project to manage.
     const managed = groups.filter(
       (group) =>
@@ -103,9 +100,9 @@ export function ProjectsList() {
           })
         : managed;
     return sortLogicalProjectsForSidebar(ordered, threads, projectSortOrder);
-  }, [groups, projectOrder, projectSortOrder, scratchRootByEnvironmentId, threads]);
+  })();
 
-  const activityByKey = useMemo(() => {
+  const activityByKey = (() => {
     const groupKeyByProjectRef = new Map(
       projectGroups.flatMap((group) =>
         group.memberProjectRefs.map(
@@ -125,16 +122,28 @@ export function ProjectsList() {
       );
       activity.set(key, entry);
     }
+    // Older settled threads stay on the server until a shelf loads them.
+    const unloadedByKey = new Map(
+      projectGroups.map((group) => [
+        group.projectKey,
+        readUnloadedThreadCount(group.memberProjects, threads),
+      ]),
+    );
+    for (const [key, unloaded] of unloadedByKey) {
+      if (unloaded > 0 && !activity.has(key)) {
+        activity.set(key, { threadCount: 0, lastThreadMs: Number.NEGATIVE_INFINITY });
+      }
+    }
     return new Map(
       [...activity].map(([key, { threadCount, lastThreadMs }]): [string, ProjectActivity] => [
         key,
         {
-          threadCount,
+          threadCount: threadCount + (unloadedByKey.get(key) ?? 0),
           lastThreadAt: Number.isFinite(lastThreadMs) ? new Date(lastThreadMs).toISOString() : null,
         },
       ]),
     );
-  }, [projectGroups, threads]);
+  })();
 
   const normalizedQuery = normalizeSearchText(query.trim());
   const matches = (group: SidebarProjectSnapshot) =>

@@ -17,11 +17,9 @@ export interface ProjectGroupOrganization {
 }
 
 /**
- * Pin and archive state of a logical project, from the records its machines
- * keep. Clients write every record together, but records can still disagree
- * (an agent changed one, or a machine added the project later). Then the
- * project stays visible: pinned when any record is pinned, and archived only
- * when every record is archived.
+ * Pin and archive state of a logical project, from its machines' records.
+ * Records can disagree, so the project stays visible: pinned when any record
+ * is pinned, archived only when every record is archived.
  */
 export function resolveProjectGroupOrganization(
   members: ReadonlyArray<ProjectOrganizationFields>,

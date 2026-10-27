@@ -57,6 +57,7 @@ const launchGroupDotClassName: Record<SidebarThreadStatus, string> = {
   working: "bg-info",
   approval: "bg-warning",
   input: "bg-indigo-500 dark:bg-indigo-300",
+  request: "bg-guest",
   limited: "bg-warning",
   failed: "bg-error",
   waiting: "bg-muted-foreground/60",

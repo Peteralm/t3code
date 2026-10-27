@@ -72,7 +72,7 @@ import Migration0066 from "./Migrations/066_RepairClientSettlementTimestamps.ts"
 import Migration0067 from "./Migrations/067_WebhookDedupe.ts";
 import Migration0068 from "./Migrations/068_ShellStopRequestIndex.ts";
 import Migration0069 from "./Migrations/069_ThreadMessageSearch.ts";
-// Fork build: PR #15990 shipped this as 057; renumbered to the next free id on main.
+// Fork build: the project organization migration takes the next free id on main.
 import Migration0070 from "./Migrations/070_ProjectionProjectsOrganization.ts";
 
 const migrationEntries = [
@@ -162,12 +162,7 @@ const makeMigrationLoader = (throughId?: number) =>
 
 const FIRST_V2_MIGRATION_ID = 55;
 
-/**
- * Fail before migrating when the migrator would skip one of V2's own
- * migrations. It skips every id up to the highest recorded one, whatever name
- * was recorded, so a database that took a V2 id for another migration would
- * start without V2's schema and fail on first use.
- */
+// Migrators skip ids up to the highest recorded; reject collisions that would skip V2 schema.
 const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function* (
   throughId?: number,
 ) {

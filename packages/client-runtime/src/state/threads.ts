@@ -48,6 +48,7 @@ import {
   type ThreadHistoryMeta,
 } from "./threadHistoryMerge.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
+import { makeThreadRequestsResolvedAnnouncer, pendingRuntimeRequestIds } from "./threadRequests.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   type EnvironmentThreadState,
@@ -254,9 +255,17 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const applyLock = yield* Semaphore.make(1);
   // Save only completed data/cursor updates. A canceled scope must not cache
   // a cursor whose event has not reached the data yet.
+  const announceRequests = makeThreadRequestsResolvedAnnouncer(environmentId, threadId);
   const remember = Effect.gen(function* () {
     const current = yield* SubscriptionRef.get(state);
     const sequence = yield* SubscriptionRef.get(lastSequence);
+    // Only a synchronized projection from the scope that owns the thread is
+    // authoritative: a cached one can predate a request the user already has
+    // drafts for, and a superseded scope can lag its successor.
+    const owns = resumeCache === undefined || resumeCache.owner === owner;
+    if (owns && current.status === "deleted") announceRequests([]);
+    else if (owns && current.status === "live" && Option.isSome(current.data))
+      announceRequests(pendingRuntimeRequestIds(current.data.value));
     committed = {
       state: current,
       sequence,
@@ -759,7 +768,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
   // A cached item can stay running after the server finished it, and no event will ever
   // name it again: it can sit outside every bounded window, and a repeated Stop records
-  // nothing new (#18188). Stop asks the server about each pending item instead of
+  // nothing new. Stop asks the server about each pending item instead of
   // inferring status from what a snapshot omits, and settles only those items.
   const reconcilePendingWork = Effect.fn("EnvironmentThreadState.reconcilePendingWork")(
     function* () {
@@ -961,8 +970,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           ...(canResume ? { afterSequence: sequence } : {}),
           ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
           ...(acceptBoundedSnapshot
-            ? { acceptBoundedSnapshot: true as const, acceptCompactTurnItems: true as const }
+            ? {
+                acceptBoundedSnapshot: true as const,
+                acceptCompactTurnItems: true as const,
+                acceptCompactIds: true as const,
+              }
             : {}),
+          acceptDedupedBodies: true as const,
         };
       }),
       {
@@ -1047,5 +1061,7 @@ export * from "./composerPathSearch.ts";
 export * from "./threadCommands.ts";
 export * from "./threadFeedback.ts";
 export * from "./threadDetail.ts";
+export * from "./threadFamilies.ts";
+export * from "./olderSettledThreads.ts";
 export * from "./threadShell.ts";
 export * from "./threadState.ts";

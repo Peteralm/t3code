@@ -27,11 +27,10 @@ export type ThreadGroupLayout<T, S extends string> = Readonly<
 >;
 
 /**
- * Groups each section's threads into blocks. A group renders where its top
- * thread renders. When the top thread is in a parked section (snoozed,
- * settled) but a grouped thread is live, the group moves to one live
- * thread's place, so live work never hides in a shelf. Chains join the top group.
- * Threads grouped under a thread outside the given sections stay top-level.
+ * Groups each section's threads into blocks, placed where the top thread renders.
+ * A group whose top thread is parked (snoozed, settled) but has a live member moves
+ * to that member's place, so live work never hides in a shelf. Chains join the top
+ * group; threads grouped under a thread outside the sections stay top-level.
  */
 export function layoutThreadGroups<T, S extends string>(input: {
   /** Every section, in display order. */

@@ -1,6 +1,7 @@
 import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
 import { WORKSPACE_TAB_LABELS, useEnabledNavigationTabs } from "./navigation-tabs";
 import { WorkspaceExtraTab } from "./WorkspaceExtraTab";
+import { SettingsRouteScreen } from "../settings/SettingsRouteScreen";
 import { WorkspaceSectionToolbar } from "./WorkspaceSectionToolbar";
 import { useNavigation } from "@react-navigation/native";
 import { use, useCallback, useMemo } from "react";
@@ -44,6 +45,8 @@ import {
   useSidebarWorkspaceTabs,
   useSystemWorkspaceTabBar,
 } from "./useSystemWorkspaceTabBar";
+import { openSettings } from "../settings/settings-navigation";
+import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 
 const TAB_TITLES = WORKSPACE_TAB_LABELS;
 
@@ -51,16 +54,17 @@ function WorkspaceRootTitle(props: {
   readonly maxWidth: number;
   readonly onOpenEnvironments: () => void;
 }) {
-  const { state } = useWorkspaceTabs()!;
+  const { state, settingsOpen } = useWorkspaceTabs()!;
   const enabled = useEnabledNavigationTabs();
+  const tabTitle = settingsOpen
+    ? "Settings"
+    : enabled.length
+      ? TAB_TITLES[state.selectedTab]
+      : "Navigation";
   return (
     <View style={{ width: props.maxWidth, minHeight: 32, justifyContent: "center" }}>
       <WorkspaceConnectionTitle
-        brand={
-          <CompactBrandTitle
-            accessibilityLabel={`T3 Code, ${enabled.length ? TAB_TITLES[state.selectedTab] : "Navigation"}`}
-          />
-        }
+        brand={<CompactBrandTitle accessibilityLabel={`T3 Code, ${tabTitle}`} />}
         maxWidth={props.maxWidth}
         onPress={props.onOpenEnvironments}
       />
@@ -70,6 +74,7 @@ function WorkspaceRootTitle(props: {
 
 function WorkspaceRootContent() {
   const navigation = useNavigation();
+  const selectTab = useSelectWorkspaceTab();
   const { width: windowWidth } = useWindowDimensions();
   const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
   const primaryColumn = use(NativePrimaryColumnContext);
@@ -97,17 +102,14 @@ function WorkspaceRootContent() {
     () => (
       <WorkspaceRootTitle
         maxWidth={Math.max(0, width - 160)}
-        onOpenEnvironments={() =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "SettingsEnvironments" },
-          })
-        }
+        onOpenEnvironments={() => openSettings(navigation, "SettingsEnvironments")}
       />
     ),
     [width, navigation],
   );
-  const tab = state.tabs[state.selectedTab];
+  // Settings is a workspace tab too; its list takes the place of the selected tab's.
+  const settingsOpen = workspace.settingsOpen;
+  const tab = state.tabs[settingsOpen ? "settings" : state.selectedTab];
   const bottomClearance =
     layout.primarySidebarOverlaysContent && state.selectedTab === "usage"
       ? workspaceDockBottomClearance({ bottomInset: insets.bottom, keyboardHeight })
@@ -140,6 +142,7 @@ function WorkspaceRootContent() {
         {Platform.OS === "ios" ? (
           <NativeStackScreenOptions
             optionsVersion={[
+              settingsOpen,
               state.selectedTab,
               state.selectionRevision,
               width,
@@ -147,7 +150,11 @@ function WorkspaceRootContent() {
               enabled.length,
             ]}
             options={{
-              title: enabled.length ? TAB_TITLES[state.selectedTab] : "Navigation",
+              title: settingsOpen
+                ? "Settings"
+                : enabled.length
+                  ? TAB_TITLES[state.selectedTab]
+                  : "Navigation",
               headerShown: true,
               headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
               headerStyle: NATIVE_LIQUID_GLASS_SUPPORTED
@@ -158,7 +165,12 @@ function WorkspaceRootContent() {
                 ? { headerSearchBarOptions: undefined, unstable_headerRightItems: () => [] }
                 : {}),
               unstable_headerLeftItems: () => [],
-              headerTitle: state.selectedTab === "usage" ? undefined : renderHeaderTitle,
+              // Beside a detail column the tab bar names the tab and the detail header the page,
+              // so the sidebar keeps the brand.
+              headerTitle:
+                sidebarNavigation || (!settingsOpen && state.selectedTab !== "usage")
+                  ? renderHeaderTitle
+                  : undefined,
             }}
           />
         ) : (
@@ -181,11 +193,7 @@ function WorkspaceRootContent() {
               {
                 accessibilityLabel: "Settings",
                 icon: "gearshape",
-                onPress: () =>
-                  navigation.navigate("SettingsSheet", {
-                    screen: "SettingsContent",
-                    params: { screen: "Settings" },
-                  }),
+                onPress: () => selectTab("settings"),
               },
             ]}
           />
@@ -195,7 +203,9 @@ function WorkspaceRootContent() {
             sidebarPicker ? { ...insets, top: 0 } : compactTabs ? { ...insets, bottom: 0 } : insets
           }
         >
-          {enabled.length === 0 ? (
+          {settingsOpen ? (
+            <SettingsRouteScreen />
+          ) : enabled.length === 0 ? (
             <WorkspaceNoTabs />
           ) : state.selectedTab === "threads" ? (
             <HomeRouteScreen />
@@ -208,14 +218,15 @@ function WorkspaceRootContent() {
         {deviceType !== "pad" && deviceType !== "phone" && sidebarPicker ? (
           <WorkspaceSidebarTabs />
         ) : null}
-        {enabled.length === 0 ? null : state.selectedTab === "threads" ||
-          state.selectedTab === "pullRequests" ? (
+        {/* Android's Settings list carries its own search in its app bar. */}
+        {enabled.length === 0 && !settingsOpen ? null : (
+            settingsOpen
+              ? Platform.OS === "ios"
+              : state.selectedTab === "threads" || state.selectedTab === "pullRequests"
+          ) ? (
           <WorkspaceToolbar sidebar={sidebarNavigation} onNewTask={startNewTask} />
         ) : (
-          <WorkspaceSectionToolbar
-            onNewTask={startNewTask}
-            showCompose={state.selectedTab !== "usage"}
-          />
+          <WorkspaceSectionToolbar onNewTask={startNewTask} showCompose={false} />
         )}
       </View>
     </WorkspaceTabsContext>

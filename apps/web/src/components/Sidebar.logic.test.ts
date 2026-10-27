@@ -47,7 +47,11 @@ import {
   type Thread,
 } from "../types";
 import { makeThreadFixture, type ThreadFixtureOverrides } from "../test-fixtures";
-import { completeSidebarRouteReveal, pendingSidebarRouteReveal } from "./sidebar/routeReveal";
+import {
+  completeSidebarRouteReveal,
+  pendingSidebarRouteReveal,
+  resolveSidebarRouteReveal,
+} from "./sidebar/routeReveal";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 
@@ -238,6 +242,19 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe("approval");
   });
 
+  it("shows a waiting guest message as a Request, below the agent's own requests", () => {
+    expect(resolveSidebarThreadStatus({ ...idle, pendingGuestMessageCount: 1, runtime })).toBe(
+      "request",
+    );
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        hasPendingUserInput: true,
+        pendingGuestMessageCount: 1,
+      }),
+    ).toBe("input");
+  });
+
   it("keeps usage-limit stops Limited and visible until the thread recovers", () => {
     const limited = {
       ...runtime,
@@ -412,7 +429,9 @@ describe("resolveThreadStatusPill", () => {
       resolveThreadStatusPill({
         thread: {
           ...baseThread,
-          pendingBackgroundTasks: [{ taskId: "bg-1", description: "Watch build", kind: "monitor" }],
+          pendingBackgroundTasks: [
+            { taskId: "bg-1", description: "Watch build", kind: "monitor", awaited: true },
+          ],
           runtime: {
             ...baseThread.runtime,
             status: "idle",
@@ -844,16 +863,38 @@ describe("navigation after parking a thread", () => {
 
 describe("unseen completion with background work", () => {
   it.each([
-    { kind: "command", status: "ready", topStatus: "done", receded: false, pill: "Completed" },
-    { kind: "monitor", status: "waiting", topStatus: "waiting", receded: true, pill: "Waiting" },
-  ] as const)("presents a completed thread with a $kind roster", (expected) => {
+    {
+      roster: "dev server",
+      task: { kind: "command" },
+      status: "ready",
+      topStatus: "done",
+      receded: false,
+      pill: "Completed",
+    },
+    {
+      roster: "dev server watchdog",
+      task: { kind: "monitor" },
+      status: "ready",
+      topStatus: "done",
+      receded: false,
+      pill: "Completed",
+    },
+    {
+      roster: "awaited command",
+      task: { kind: "command", awaited: true },
+      status: "waiting",
+      topStatus: "waiting",
+      receded: true,
+      pill: "Waiting",
+    },
+  ] as const)("presents a completed thread with a $roster roster", (expected) => {
     const thread = presentThreadShell(localEnvironmentId, {
       ...makeThreadFixture().source,
       latestRunId: RunId.make("run-background-completion"),
       status: "completed",
       latestRunCompletedAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
       lastVisitedAt: DateTime.makeUnsafe("2026-06-20T00:59:00.000Z"),
-      pendingBackgroundTasks: [{ taskId: "background-work", kind: expected.kind }],
+      pendingBackgroundTasks: [{ taskId: "background-work", ...expected.task }],
     });
     const status = resolveSidebarThreadStatus(thread);
     const isUnread = hasUnseenCompletion(thread);
@@ -884,7 +925,12 @@ describe("Working shelf (beta)", () => {
     lastError: null,
     updatedAt: "2026-03-09T10:00:00.000Z",
   };
-  const backgroundTask = { taskId: "bg-1", description: "Watch build", kind: "monitor" as const };
+  const backgroundTask = {
+    taskId: "bg-1",
+    description: "Watch build",
+    kind: "monitor" as const,
+    awaited: true as const,
+  };
   const idle = {
     hasActionableProposedPlan: false,
     hasPendingApprovals: false,
@@ -1291,5 +1337,65 @@ describe("project organization in the sidebar", () => {
         sortLogicalProjectsForSidebar(projects, [], order).map((project) => project.projectKey),
       ).toEqual(["older", "newer"]);
     }
+  });
+});
+
+describe("resolveSidebarRouteReveal", () => {
+  const scopedProjectKeys = new Set(["environment-test:project-scoped"]);
+  const hidden = makeThreadFixture({ projectId: ProjectId.make("project-other") });
+  const hiddenKey = "environment-test:thread-test";
+  const findThread = (key: string) => (key === hiddenKey ? hidden : undefined);
+
+  it("widens the scope for a newly opened thread the scope hides", () => {
+    expect(
+      resolveSidebarRouteReveal({
+        reveal: { observedKey: "environment-test:other", pendingKey: null },
+        routeKey: hiddenKey,
+        isSearching: false,
+        scopedProjectKeys,
+        findThread,
+      }),
+    ).toEqual({ pendingKey: hiddenKey, widensScope: true });
+  });
+
+  it("never widens for a thread whose reveal already completed", () => {
+    // A remount's once-per-mount scroll must keep the scope the user chose.
+    expect(
+      resolveSidebarRouteReveal({
+        reveal: { observedKey: hiddenKey, pendingKey: null },
+        routeKey: hiddenKey,
+        isSearching: false,
+        scopedProjectKeys,
+        findThread,
+      }),
+    ).toEqual({ pendingKey: null, widensScope: false });
+  });
+
+  it("widens again for a thread reopened before the thread between them listed its row", () => {
+    // The user scoped away from the open thread, then went to a thread whose row
+    // never mounted, then came back.
+    const reveal = { observedKey: hiddenKey, pendingKey: null };
+    const resolve = (routeKey: string) =>
+      resolveSidebarRouteReveal({
+        reveal,
+        routeKey,
+        isSearching: false,
+        scopedProjectKeys,
+        findThread,
+      });
+    resolve("environment-test:unlisted");
+    expect(resolve(hiddenKey)).toEqual({ pendingKey: hiddenKey, widensScope: true });
+  });
+
+  it("holds a pending reveal without widening while searching", () => {
+    expect(
+      resolveSidebarRouteReveal({
+        reveal: { observedKey: hiddenKey, pendingKey: hiddenKey },
+        routeKey: hiddenKey,
+        isSearching: true,
+        scopedProjectKeys,
+        findThread,
+      }),
+    ).toEqual({ pendingKey: hiddenKey, widensScope: false });
   });
 });

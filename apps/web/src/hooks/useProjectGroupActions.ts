@@ -11,7 +11,6 @@ import {
 import type { ProjectIconOverride } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback, useMemo } from "react";
 import { create } from "zustand";
 
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
@@ -97,15 +96,14 @@ function queueProjectWrite(
  */
 export function useProjectGroupActions() {
   const { environments } = useEnvironments();
-  const environmentById = useMemo(
-    () => new Map(environments.map((environment) => [environment.environmentId, environment])),
-    [environments],
+  const environmentById = new Map(
+    environments.map((environment) => [environment.environmentId, environment]),
   );
   const updateProject = useOrchestrationCommand(projectEnvironment.update, {
     reportFailure: false,
   });
 
-  const reportFailure = useCallback((title: string, result: GroupResult) => {
+  const reportFailure = (title: string, result: GroupResult) => {
     if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
     const error = squashAtomCommandFailure(result);
     toastManager.add(
@@ -115,178 +113,160 @@ export function useProjectGroupActions() {
         description: error instanceof Error ? error.message : "An error occurred.",
       }),
     );
-  }, []);
+  };
 
-  const updateGroup = useCallback(
-    async (
-      group: ProjectGroup,
-      input: ProjectGroupFields,
-      failureTitle: string,
-    ): Promise<GroupResult> => {
-      const unavailable = group.memberProjects.find((member) => {
-        const environment = environmentById.get(member.environmentId);
-        return environment?.connection.phase !== "connected" || !environment.serverConfig;
-      });
-      if (unavailable) {
-        const result: GroupResult = AsyncResult.failure(
-          Cause.fail(
-            new Error(
-              `Connect ${unavailable.environmentLabel ?? "the selected environment"} and try again.`,
-            ),
+  const updateGroup = async (
+    group: ProjectGroup,
+    input: ProjectGroupFields,
+    failureTitle: string,
+  ): Promise<GroupResult> => {
+    const unavailable = group.memberProjects.find((member) => {
+      const environment = environmentById.get(member.environmentId);
+      return environment?.connection.phase !== "connected" || !environment.serverConfig;
+    });
+    if (unavailable) {
+      const result: GroupResult = AsyncResult.failure(
+        Cause.fail(
+          new Error(
+            `Connect ${unavailable.environmentLabel ?? "the selected environment"} and try again.`,
           ),
+        ),
+      );
+      reportFailure(failureTitle, result);
+      return result;
+    }
+    for (const member of group.memberProjects) {
+      const result = mapAtomCommandResult(
+        await updateProject({
+          environmentId: member.environmentId,
+          input: { projectId: member.id, ...input },
+        }),
+        () => undefined,
+      );
+      if (result._tag === "Failure") {
+        // Earlier members already took the write, so name where it stopped.
+        reportFailure(
+          group.memberProjects.length > 1
+            ? `${failureTitle} on ${member.environmentLabel ?? "the current environment"}`
+            : failureTitle,
+          result,
         );
-        reportFailure(failureTitle, result);
         return result;
       }
-      for (const member of group.memberProjects) {
-        const result = mapAtomCommandResult(
-          await updateProject({
-            environmentId: member.environmentId,
-            input: { projectId: member.id, ...input },
-          }),
-          () => undefined,
-        );
-        if (result._tag === "Failure") {
-          // Earlier members already took the write, so name where it stopped.
-          reportFailure(
-            group.memberProjects.length > 1
-              ? `${failureTitle} on ${member.environmentLabel ?? "the current environment"}`
-              : failureTitle,
-            result,
-          );
-          return result;
-        }
-      }
-      return AsyncResult.success(undefined);
-    },
-    [environmentById, reportFailure, updateProject],
-  );
+    }
+    return AsyncResult.success(undefined);
+  };
 
-  const unorganizableMember = useCallback(
-    (group: Pick<SidebarProjectSnapshot, "memberProjects">) =>
-      group.memberProjects.find(
-        (member) =>
-          environmentById.get(member.environmentId)?.serverConfig?.environment.capabilities
-            .projectOrganization !== true,
-      ),
-    [environmentById],
-  );
+  const unorganizableMember = (group: Pick<SidebarProjectSnapshot, "memberProjects">) =>
+    group.memberProjects.find(
+      (member) =>
+        environmentById.get(member.environmentId)?.serverConfig?.environment.capabilities
+          .projectOrganization !== true,
+    );
 
   /** True when every machine with the project can store its pin and archive. */
-  const canOrganize = useCallback(
-    (group: Pick<SidebarProjectSnapshot, "memberProjects">) =>
-      unorganizableMember(group) === undefined,
-    [unorganizableMember],
-  );
+  const canOrganize = (group: Pick<SidebarProjectSnapshot, "memberProjects">) =>
+    unorganizableMember(group) === undefined;
 
   // Older servers drop pin and archive fields, so refuse instead of writing
   // to only some machines.
-  const organizeGroup = useCallback(
-    async (
-      group: ProjectGroup,
-      input: Pick<ProjectGroupFields, "pinned" | "pinOrderKey" | "archived">,
-      failureTitle: string,
-    ): Promise<GroupResult> => {
-      const outdated = unorganizableMember(group);
-      if (outdated) {
-        const result: GroupResult = AsyncResult.failure(
-          Cause.fail(
-            new Error(
-              `Update ${outdated.environmentLabel ?? "the selected environment"} to pin and archive projects.`,
-            ),
+  const organizeGroup = async (
+    group: ProjectGroup,
+    input: Pick<ProjectGroupFields, "pinned" | "pinOrderKey" | "archived">,
+    failureTitle: string,
+  ): Promise<GroupResult> => {
+    const outdated = unorganizableMember(group);
+    if (outdated) {
+      const result: GroupResult = AsyncResult.failure(
+        Cause.fail(
+          new Error(
+            `Update ${outdated.environmentLabel ?? "the selected environment"} to pin and archive projects.`,
           ),
-        );
-        reportFailure(failureTitle, result);
-        return result;
-      }
-      return updateGroup(group, input, failureTitle);
-    },
-    [reportFailure, unorganizableMember, updateGroup],
-  );
-
-  /** Pins after every pinned project in `groups`, or unpins. */
-  const busyCounts = useProjectWriteCounts((state) => state.counts);
-  /** True while a pin, archive or reorder write runs or waits for the project. */
-  const isBusy = useCallback((projectKey: string) => busyCounts.has(projectKey), [busyCounts]);
-
-  const setPinned = useCallback(
-    (group: ProjectGroup, pinned: boolean, groups: ReadonlyArray<ProjectGroup>) => {
-      // Take the slot at click time, so quick pins keep their order.
-      const input = pinned
-        ? { pinned: true, pinOrderKey: issuePinOrderKey(groups) }
-        : { pinned: false };
-      return queueProjectWrite([group.projectKey], () =>
-        organizeGroup(
-          group,
-          input,
-          pinned ? `Failed to pin ${group.displayName}` : `Failed to unpin ${group.displayName}`,
         ),
       );
-    },
-    [organizeGroup],
-  );
+      reportFailure(failureTitle, result);
+      return result;
+    }
+    return updateGroup(group, input, failureTitle);
+  };
+
+  const busyCounts = useProjectWriteCounts((state) => state.counts);
+  /** True while a pin, archive or reorder write runs or waits for the project. */
+  const isBusy = (projectKey: string) => busyCounts.has(projectKey);
+
+  /** Pins after every pinned project in `groups`, or unpins. */
+  const setPinned = (group: ProjectGroup, pinned: boolean, groups: ReadonlyArray<ProjectGroup>) => {
+    // Take the slot at click time, so quick pins keep their order.
+    const input = pinned
+      ? { pinned: true, pinOrderKey: issuePinOrderKey(groups) }
+      : { pinned: false };
+    return queueProjectWrite([group.projectKey], () =>
+      organizeGroup(
+        group,
+        input,
+        pinned ? `Failed to pin ${group.displayName}` : `Failed to unpin ${group.displayName}`,
+      ),
+    );
+  };
 
   /** Saves a dragged order of the pinned projects. */
-  const reorderPinned = useCallback(
-    (orderedGroups: ReadonlyArray<ProjectGroup>, movedKey: string): Promise<GroupResult> =>
-      queueProjectWrite(
-        orderedGroups.map((group) => group.projectKey),
-        async () => {
-          const groupByKey = new Map(orderedGroups.map((group) => [group.projectKey, group]));
-          const writes = planProjectPinReorder({
-            orderedKeys: orderedGroups.map((group) => group.projectKey),
-            pinOrderKeyByKey: new Map(
-              orderedGroups.map((group) => [group.projectKey, group.pinOrderKey ?? null]),
-            ),
-            movedKey,
-          });
-          for (const write of writes) {
-            const group = groupByKey.get(write.key);
-            if (!group) continue;
-            const result = await organizeGroup(
-              group,
-              { pinned: true, pinOrderKey: write.pinOrderKey },
-              "Failed to reorder pinned projects",
-            );
-            if (result._tag === "Failure") return result;
-          }
-          return AsyncResult.success(undefined);
-        },
-      ),
-    [organizeGroup],
-  );
+  const reorderPinned = (
+    orderedGroups: ReadonlyArray<ProjectGroup>,
+    movedKey: string,
+  ): Promise<GroupResult> =>
+    queueProjectWrite(
+      orderedGroups.map((group) => group.projectKey),
+      async () => {
+        const groupByKey = new Map(orderedGroups.map((group) => [group.projectKey, group]));
+        const writes = planProjectPinReorder({
+          orderedKeys: orderedGroups.map((group) => group.projectKey),
+          pinOrderKeyByKey: new Map(
+            orderedGroups.map((group) => [group.projectKey, group.pinOrderKey ?? null]),
+          ),
+          movedKey,
+        });
+        for (const write of writes) {
+          const group = groupByKey.get(write.key);
+          if (!group) continue;
+          const result = await organizeGroup(
+            group,
+            { pinned: true, pinOrderKey: write.pinOrderKey },
+            "Failed to reorder pinned projects",
+          );
+          if (result._tag === "Failure") return result;
+        }
+        return AsyncResult.success(undefined);
+      },
+    );
 
   /** Archives with an Undo toast, or unarchives. Threads keep their state. */
-  const setArchived = useCallback(
-    async (group: ProjectGroup, archived: boolean): Promise<GroupResult> => {
-      const unarchive = () =>
-        queueProjectWrite([group.projectKey], () =>
-          organizeGroup(group, { archived: false }, `Failed to unarchive ${group.displayName}`),
-        );
-      if (!archived) return unarchive();
-      const result = await queueProjectWrite([group.projectKey], () =>
-        organizeGroup(group, { archived: true }, `Failed to archive ${group.displayName}`),
+  const setArchived = async (group: ProjectGroup, archived: boolean): Promise<GroupResult> => {
+    const unarchive = () =>
+      queueProjectWrite([group.projectKey], () =>
+        organizeGroup(group, { archived: false }, `Failed to unarchive ${group.displayName}`),
       );
-      if (result._tag === "Success") {
-        const toastId = toastManager.add({
-          type: "success",
-          title: `Archived ${group.displayName}`,
-          description: "Its threads are hidden until you unarchive it in Settings → Projects.",
-          timeout: 5_000,
-          actionProps: {
-            children: "Undo",
-            onClick: () => {
-              toastManager.close(toastId);
-              void unarchive();
-            },
+    if (!archived) return unarchive();
+    const result = await queueProjectWrite([group.projectKey], () =>
+      organizeGroup(group, { archived: true }, `Failed to archive ${group.displayName}`),
+    );
+    if (result._tag === "Success") {
+      const toastId = toastManager.add({
+        type: "success",
+        title: `Archived ${group.displayName}`,
+        description: "Its threads are hidden until you unarchive it in Settings → Projects.",
+        timeout: 5_000,
+        actionProps: {
+          children: "Undo",
+          onClick: () => {
+            toastManager.close(toastId);
+            void unarchive();
           },
-          data: { hideCopyButton: true },
-        });
-      }
-      return result;
-    },
-    [organizeGroup],
-  );
+        },
+        data: { hideCopyButton: true },
+      });
+    }
+    return result;
+  };
 
   return { updateGroup, canOrganize, isBusy, setPinned, reorderPinned, setArchived };
 }

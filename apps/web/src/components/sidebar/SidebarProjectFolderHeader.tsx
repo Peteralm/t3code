@@ -33,7 +33,9 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
           ...thread,
           lastVisitedAt: resolveThreadLastVisitedAt(
             thread.lastVisitedAt,
-            localLastVisitedAtById[scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))],
+            localLastVisitedAtById[
+              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+            ],
           ),
         })),
       )

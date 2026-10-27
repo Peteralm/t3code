@@ -270,9 +270,8 @@ provider session. The request becomes the V2 command
 the timeout expires. A wait timeout does not cancel the child; the result sets
 `waitTimedOut: true`, and the caller can continue with `task_status`. A pending blocking
 question also ends the wait with `hasPendingQuestion: true` and `waitTimedOut: false`.
-If `hasPendingQuestion`, pass `threadId=childThreadId` to `t3_pending_request_list`,
-`t3_pending_request_read` (with `requestId`) and `t3_pending_request_respond`, or ask
-the user; the task's completion still wakes this thread. A pending live approval for the
+If `hasPendingQuestion`, pass `threadId=childThreadId` to `t3_pending_request` with
+action `list`, `read` (with `requestId`), or `respond`, or ask the user; the task's completion still wakes this thread. A pending live approval for the
 task's own unfinished work also ends the wait. Its identity appears in `pendingApproval`;
 it grants no approval authority. Read the fresh full request in the child thread before
 responding, since the durable record can outlive its provider callback. Async questions
@@ -391,7 +390,8 @@ and `creationSource: "mcp"`; provider output uses `creationSource: "provider"`.
 Actor and ingress are separate so agent-authored user-role messages remain
 distinguishable from human-authored messages.
 
-Agents mention another thread as `[title](t3-thread://v1/<threadId>)`. The
+Agents mention another thread as `[title](t3-thread://v1/<threadId>)`. Thread
+results carry this ready-made as `link`, so agents never format the id. The
 link carries only the id. Clients first resolve it in the message's environment,
 then use a unique match in another enabled environment. Ambiguous matches stay
 unresolved. Web and desktop show the resolved thread’s current title. Mobile
