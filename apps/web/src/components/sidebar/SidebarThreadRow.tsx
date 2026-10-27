@@ -1400,7 +1400,9 @@ const SidebarThreadRow = memo(
 
     const diff = latestRunDiff(thread);
     // Only the provider icon would remain; the New design drops the line instead of leaving it blank.
+    // A launcher's fold toggle lives on this line, so it keeps the line.
     const metaLineEmpty =
+      launchGroupToggle === null &&
       !thread.branch &&
       !showsScratchMachine &&
       prBadge === null &&
